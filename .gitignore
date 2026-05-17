@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+.installed.cfg
+*.tox/
+.cache/
+.coverage
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual env
+.venv/
+venv/
+env/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime artifacts that don't belong in source
+*.log
+*.pid
+
+# Piper voice models — large binary blobs auto-downloaded at runtime
+# (kept in ~/.cache/mcp-sonos/voices by default, never inside the repo,
+# but guard against accidental copies anyway)
+*.onnx
+*.onnx.json
+voices/
