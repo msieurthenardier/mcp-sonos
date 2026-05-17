@@ -17,6 +17,7 @@ from soco import SoCo
 
 from . import speakers as sp
 from .audio_host import AudioHost
+from .playlists import PlaylistManager
 from .tts import synthesize
 
 
@@ -93,6 +94,7 @@ class SonosController:
         self._lock = threading.Lock()
         self._speakers: list[SoCo] = []
         self._speakers_ts: float = 0.0
+        self.playlists = PlaylistManager(resolve_coordinator=self._resolve_coordinator)
 
     # ---- discovery / lookup -------------------------------------------------
 

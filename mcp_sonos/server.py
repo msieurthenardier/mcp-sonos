@@ -191,6 +191,130 @@ def say(
     return controller.say(target, text, volume=volume, lang=lang)
 
 
+# ---- playlists --------------------------------------------------------------
+#
+# Playlists are in-memory only — they live for the life of the MCP server
+# process. Build them up with `playlist_create` / `playlist_add` (or the
+# bulk `playlist_add_many`), then `playlist_play` to start continuous
+# playback in the background. The agent is free to add more items while a
+# playlist is playing; subsequent tracks will pick them up.
+
+
+PlaylistName = Annotated[
+    str,
+    Field(description="Unique name for the playlist, e.g. 'morning_mix'."),
+]
+
+
+@mcp.tool
+def playlist_create(name: PlaylistName) -> dict:
+    """Create a new empty playlist. Errors if the name already exists."""
+    return controller.playlists.create(name).to_dict()
+
+
+@mcp.tool
+def playlist_delete(name: PlaylistName) -> dict:
+    """Delete a playlist. Stops any in-progress playback of it first."""
+    controller.playlists.delete(name)
+    return {"deleted": name}
+
+
+@mcp.tool
+def playlist_clear(name: PlaylistName) -> dict:
+    """Empty a playlist but keep its name registered."""
+    return controller.playlists.clear(name).to_dict()
+
+
+@mcp.tool
+def playlist_add(
+    name: PlaylistName,
+    url: Annotated[str, Field(description="HTTP(S) URL of an audio track. Prefer plain HTTP MP3 — see README for stream-format gotchas.")],
+    title: Annotated[str | None, Field(description="Optional display title for the Sonos UI and `now_playing`.")] = None,
+) -> dict:
+    """Append one item to a playlist."""
+    return controller.playlists.add(name, url, title=title).to_dict()
+
+
+@mcp.tool
+def playlist_add_many(
+    name: PlaylistName,
+    items: Annotated[
+        list[dict],
+        Field(
+            description=(
+                "List of items. Each dict needs 'url'; 'title' is optional. "
+                "Use this instead of repeated playlist_add calls to keep tool "
+                "round-trips down."
+            )
+        ),
+    ],
+) -> dict:
+    """Append many items to a playlist in one call. Use this for bulk-loading."""
+    return controller.playlists.add_many(name, items).to_dict()
+
+
+@mcp.tool
+def playlist_remove(
+    name: PlaylistName,
+    index: Annotated[int, Field(ge=0, description="0-based index of the item to remove.")],
+) -> dict:
+    """Remove the item at `index` from a playlist."""
+    return controller.playlists.remove(name, index).to_dict()
+
+
+@mcp.tool
+def playlist_get(name: PlaylistName) -> dict:
+    """Return the playlist's name, item count, and full item list."""
+    return controller.playlists.get(name).to_dict()
+
+
+@mcp.tool
+def playlist_list() -> list[dict]:
+    """List every named playlist with its item count."""
+    return controller.playlists.list_all()
+
+
+@mcp.tool
+def playlist_play(
+    speaker: SpeakerName,
+    name: PlaylistName,
+    shuffle: Annotated[bool, Field(description="Randomize order. Starts with the item at `start_index`, then shuffles the rest.")] = False,
+    start_index: Annotated[int, Field(ge=0, description="0-based index of the first item to play.")] = 0,
+) -> dict:
+    """Start continuous background playback of a playlist.
+
+    Returns immediately with session info. The server plays items
+    back-to-back on the speaker's group coordinator until the playlist
+    ends or playback is preempted (by another `say`, `play_url`, or
+    `stop`). External interruptions cleanly end the session.
+    """
+    return controller.playlists.play(speaker, name, shuffle=shuffle, start_index=start_index)
+
+
+@mcp.tool
+def playlist_next(speaker: SpeakerName) -> dict:
+    """Skip to the next item in the currently-playing playlist on this speaker."""
+    return controller.playlists.next_track(speaker)
+
+
+@mcp.tool
+def playlist_previous(speaker: SpeakerName) -> dict:
+    """Go back to the previous item in the currently-playing playlist."""
+    return controller.playlists.previous_track(speaker)
+
+
+@mcp.tool
+def playlist_stop(speaker: SpeakerName) -> dict:
+    """Stop the playlist currently playing on this speaker and halt playback."""
+    return controller.playlists.stop(speaker)
+
+
+@mcp.tool
+def playlist_status(speaker: SpeakerName) -> dict:
+    """Return the status of the playlist currently playing on this speaker."""
+    return controller.playlists.status(speaker)
+
+
 def main() -> None:
     mcp.run()  # stdio transport by default
 

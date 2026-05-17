@@ -11,7 +11,7 @@ own music and speak on your speakers.
 
 ## What it does
 
-19 MCP tools:
+32 MCP tools:
 
 | group | tools |
 |---|---|
@@ -20,6 +20,7 @@ own music and speak on your speakers.
 | volume | `set_volume`, `mute`, `unmute` |
 | grouping | `group`, `ungroup`, `partymode`, `dissolve_all_groups` |
 | TTS | `say` (target=`"all"` for synced broadcast across every speaker) |
+| playlists | `playlist_create`, `playlist_delete`, `playlist_clear`, `playlist_add`, `playlist_add_many`, `playlist_remove`, `playlist_get`, `playlist_list`, `playlist_play`, `playlist_next`, `playlist_previous`, `playlist_stop`, `playlist_status` |
 
 Speakers are addressed by name (case-insensitive). Transport commands
 auto-route to the group coordinator; responses include `group_members`
@@ -223,6 +224,30 @@ Read these before you wire the server into an agent — they save real time.
   expose only the stream URL, not the current song's metadata. ICY
   metadata parsing isn't implemented (SoCo doesn't do it either).
 
+### Playlist limitations
+
+- **In-memory only.** Playlists vanish on server restart. No
+  persistence. Treat them as scratch space for the agent within a
+  single conversation/session.
+- **Per-speaker, not per-coordinator.** A playlist is keyed by the
+  speaker the agent picked when calling `playlist_play(speaker, ...)`.
+  The playlist follows that speaker's group coordinator if the group
+  changes — but you can't have the same playlist running on two
+  speakers in different groups simultaneously (yet — workaround:
+  group them first, then play once on the coordinator).
+- **At most one playlist per speaker.** Calling `playlist_play` on a
+  speaker that already has an active session stops the old one and
+  starts the new.
+- **External commands end the playlist.** Any `say`, `play_url`,
+  manual Sonos-app interaction, or other source taking over the
+  speaker is detected by the worker (different URI playing) and the
+  playlist exits cleanly. There's no auto-resume; the agent must
+  re-call `playlist_play(start_index=...)` to pick up where it left
+  off.
+- **Polling-based.** The worker polls transport state every 500 ms.
+  Track-to-track transitions have ~500 ms of dead air. Fine for the
+  agent's use case, suboptimal for gapless playback.
+
 ### Operational
 
 - **TTS cache grows unbounded** in `/tmp/mcp-sonos-audio/`. On
@@ -251,6 +276,12 @@ no Sonos cloud involved.
   `partymode(coordinator)`, `dissolve_all_groups`
 - Voice: `say(target, text, volume?)` — target can be a speaker name or
   `"all"` for a synchronized announcement across every speaker
+- Playlists (in-memory, named):
+  `playlist_create`, `playlist_add(name, url, title?)`,
+  `playlist_add_many(name, items[])`, `playlist_play(speaker, name,
+  shuffle?, start_index?)`, `playlist_next`, `playlist_previous`,
+  `playlist_stop`, `playlist_status`, plus
+  `playlist_list`/`get`/`remove`/`clear`/`delete`
 
 ## How to use it well
 
@@ -291,6 +322,23 @@ no Sonos cloud involved.
 
 9. Tool responses already include resulting state. Don't follow up
    with `now_playing` to confirm — read the response.
+
+10. For multi-song playback, use playlists. Build with
+    `playlist_create` + `playlist_add_many` (one call with all items
+    beats N individual `playlist_add` calls), then `playlist_play`.
+    The server plays items back-to-back in a background thread and
+    returns immediately — poll `playlist_status` to see which track
+    is current. Playlists are in-memory only (no persistence across
+    server restart), and adding items to a playlist that's already
+    playing is fine — newly-appended tracks will be picked up when
+    the worker reaches them.
+
+11. Playlists cleanly end when interrupted. If the user calls `say`,
+    `play_url`, or `stop` on a speaker that has an active playlist,
+    the playlist worker detects the takeover and exits. Don't try
+    to "pause" a playlist by calling Sonos `pause` — call
+    `playlist_stop` and remember the index if you want to resume
+    later via `playlist_play(start_index=N)`.
 
 ## What NOT to do
 
@@ -337,8 +385,9 @@ Hardening ideas for when this gets picked back up:
 
 - **Stream proxy / transcoder** (ffmpeg-based) so HLS and finicky AAC
   stations Just Work. New tool: `play_radio(speaker, url, title)`.
-- **Queue management** — `add_to_queue`, `clear_queue`,
-  `play_from_queue`. Needed for proper "build me a playlist" flows.
+- **Playlist persistence** — playlists currently live only in RAM and
+  vanish on server restart. A small SQLite store or JSON file would
+  let "morning_mix" survive across restarts.
 - **Sonos Favorites + TuneIn** read-only access, so the agent can say
   "play the radio station I favorited."
 - **ICY metadata parsing** so `now_playing` for radio streams returns
