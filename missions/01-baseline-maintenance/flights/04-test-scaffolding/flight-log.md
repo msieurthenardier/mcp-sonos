@@ -7,6 +7,23 @@
 
 ---
 
+### Flight Director Notes
+
+**2026-05-18 — Flight start**
+
+- Mission stayed `active`. Flight flipped: `ready` → `in-flight`.
+- Feature branch: `flight/04-test-scaffolding` created off `flight/03-supply-chain-hardening` at `0724234` (which includes the Flight 04 planning commit).
+- Crew loaded from `.flightops/agent-crews/leg-execution.md` (Developer + Reviewer, both Sonnet).
+- Agent pattern per Flight 02 rule of thumb:
+  - Leg 01: consolidated review+implement (text/config cleanups, runtime-inert)
+  - Leg 02: split — DI refactor has runtime semantics (module import side effects, FastMCP integration); load-bearing leg
+  - Leg 03: split — unit-test content benefits from review (assertion shape, fake usage, regression-pin correctness)
+  - Leg 04: split — investigative; fix-or-xfail decision benefits from review
+- Commit cadence: per-leg commits, matching Flights 01-03 convention.
+- **Final flight of the mission.** Successful execution closes 14/14 criteria (F7) + 3 carry-forward Action Items + either resolves or `xfail`s the `say()` coordinator bug Known Issue.
+
+---
+
 ## Reconnaissance Report
 
 Verified each scope item against current code at flight planning time (2026-05-18, after Flights 01-03 landed; current HEAD on `flight/03-supply-chain-hardening` at `989c171`). Source artifacts: [`maintenance/2026-05-18.md`](../../../../maintenance/2026-05-18.md) for F7, plus carry-forward Action Items from Flight 02 and Flight 03 debriefs.
