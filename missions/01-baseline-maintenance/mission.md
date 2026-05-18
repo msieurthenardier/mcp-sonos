@@ -51,6 +51,7 @@ N/A — findings are well-scoped from inspection; execution decisions belong in 
 ## Known Issues
 
 - [ ] Audio host LAN bind (F9) and TTS cache growth (F21) remain Pass (known-debt) — documented and accepted within trusted-LAN threat model. Out of scope for this mission. Revisit if deployment posture changes.
+- [ ] **`say()` coordinator-routing bug** — surfaced during Flight 01 execution and confirmed pre-existing during the Flight 01 debrief. `smoke_test.py` fails with `play_uri can only be called/used on the coordinator in a group` at `controller.py:328`, even when `list_groups` shows the target speaker as its own singleton coordinator. Not a Flight 01 regression (Leg 04's `say()` refactor only touched the volume branch; baseline smoke at flight start passed). Candidate root causes: stale `is_coordinator` in cached SoCo, or `_resolve_coordinator` returning a non-coordinator SoCo in the post-dissolve lull. **Recommended next step**: one-leg maintenance spike before Flight 02 — log `coord.uid` vs `coord.group.coordinator.uid` immediately before the failing `play_uri` and find the divergence. See [Flight 01 Debrief](flights/01-correctness-and-capability/flight-debrief.md#anomaly-investigation--smoke_testpy-say-failure) for full analysis.
 
 ## Flights
 

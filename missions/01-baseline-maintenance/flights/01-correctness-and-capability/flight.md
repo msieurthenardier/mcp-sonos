@@ -1,6 +1,6 @@
 # Flight: Correctness and Capability Hardening
 
-**Status**: landed
+**Status**: completed
 **Mission**: [Baseline Maintenance](../../mission.md)
 
 ## Contributing to Criteria
