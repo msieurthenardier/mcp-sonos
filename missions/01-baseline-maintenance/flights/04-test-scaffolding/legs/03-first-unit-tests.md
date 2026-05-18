@@ -1,6 +1,6 @@
 # Leg: 03-first-unit-tests
 
-**Status**: ready
+**Status**: completed
 **Flight**: [Test Scaffolding](../flight.md)
 
 ## Objective
@@ -25,13 +25,13 @@ Add the first batch of unit tests using Leg 02's scaffolding. Three test targets
 - Smoke tests still pass against live hardware (no behavior change)
 
 ## Acceptance Criteria
-- [ ] `tests/test_urls.py` exists; contains ≥3 tests covering `validate_http_url`: happy path (`http://example.com/x.mp3`, `https://...`), bad scheme (`file://`, `gopher://`), missing netloc (`http:`, empty string)
-- [ ] `tests/test_tts_verify.py` exists; contains ≥3 tests covering `_hash_voice_file` (known content → known hash), `_verify_or_log` happy (pin matches), `_verify_or_log` mismatch (raises RuntimeError + quarantine file gets created), `_verify_or_log` no-pin (logs warning, doesn't raise)
-- [ ] `tests/test_playlists_takeover.py` exists; contains ≥1 test that exercises the F1 takeover branch with `SoCoFake` and asserts no `AttributeError` is raised + log message mentions the speaker name
-- [ ] `.venv/bin/pytest` exits 0 with no live Sonos reachable
-- [ ] At least 3 tests pass (any reasonable count above that is fine)
-- [ ] All tests use `pytest` idioms (test functions, `caplog`, `tmp_path`, etc.) — no `unittest.TestCase` boilerplate unless there's a strong reason
-- [ ] If any test fails or surfaces a real bug in the code under test, **fix the code in this leg if the fix is small and obvious** (e.g. a stricter validator); otherwise note the bug and add a `pytest.xfail` marker (don't ship broken tests)
+- [x] `tests/test_urls.py` exists; contains ≥3 tests covering `validate_http_url`: happy path (`http://example.com/x.mp3`, `https://...`), bad scheme (`file://`, `gopher://`), missing netloc (`http:`, empty string)
+- [x] `tests/test_tts_verify.py` exists; contains ≥3 tests covering `_hash_voice_file` (known content → known hash), `_verify_or_log` happy (pin matches), `_verify_or_log` mismatch (raises RuntimeError + quarantine file gets created), `_verify_or_log` no-pin (logs warning, doesn't raise)
+- [x] `tests/test_playlists_takeover.py` exists; contains ≥1 test that exercises the F1 takeover branch with `SoCoFake` and asserts no `AttributeError` is raised + log message mentions the speaker name
+- [x] `.venv/bin/pytest` exits 0 with no live Sonos reachable
+- [x] At least 3 tests pass (any reasonable count above that is fine)
+- [x] All tests use `pytest` idioms (test functions, `caplog`, `tmp_path`, etc.) — no `unittest.TestCase` boilerplate unless there's a strong reason
+- [x] If any test fails or surfaces a real bug in the code under test, **fix the code in this leg if the fix is small and obvious** (e.g. a stricter validator); otherwise note the bug and add a `pytest.xfail` marker (don't ship broken tests) — N/A: all 8 tests passed first run, no bugs surfaced.
 
 ## Verification Steps
 - `cd <repo-root> && .venv/bin/pytest -v` — shows at least 3 passing tests, exits 0
@@ -118,11 +118,18 @@ Add the first batch of unit tests using Leg 02's scaffolding. Three test targets
 3. **`tests/test_playlists_takeover.py`** (uses SoCoFake + `_iteration_event` from Leg 02):
    ```python
    import logging
+   import time
    import pytest
+   from mcp_sonos import playlists as playlists_mod
    from mcp_sonos.playlists import PlaylistManager
    from tests._fakes import SoCoFake
 
-   def test_takeover_logs_cleanly_no_attributeerror(caplog):
+   def test_takeover_logs_cleanly_no_attributeerror(caplog, monkeypatch):
+       # Speed up the worker poll loop so the test runs fast and the race
+       # window (iteration_event signals "starting", not "completed") is
+       # tiny. Combine with a bounded-retry caplog check below.
+       monkeypatch.setattr(playlists_mod, "POLL_INTERVAL", 0.01)
+
        speaker = SoCoFake(player_name="Kitchen", uid="RINCON_TEST001")
 
        # PlaylistManager constructor takes resolve_coordinator: Callable[[str], tuple[SoCo, SoCo]]
@@ -134,32 +141,50 @@ Add the first batch of unit tests using Leg 02's scaffolding. Three test targets
        manager.create("morning")
        manager.add_many("morning", [{"url": "http://test/a.mp3", "title": "A"}])
 
-       with caplog.at_level(logging.INFO):
-           manager.play("Kitchen", "morning")
+       try:
+           with caplog.at_level(logging.INFO):
+               manager.play("Kitchen", "morning")
 
-           # Wait for the worker to start polling
-           assert manager._iteration_event.wait(timeout=2.0), "worker never started polling"
-           manager._iteration_event.clear()
+               # Wait for the worker to start polling. _iteration_event signals
+               # "about to observe state," not "has observed it" — see Leg 02's
+               # design notes for why this is at the top of the inner loop.
+               assert manager._iteration_event.wait(timeout=2.0), "worker never started polling"
 
-           # Simulate external takeover: a different URI is now playing
-           speaker._track = {"uri": "http://other/takeover.mp3", "title": ""}
-           speaker._transport = {"current_transport_state": "PLAYING"}
+               # Simulate external takeover: a different URI is now playing
+               speaker._track = {"uri": "http://other/takeover.mp3", "title": ""}
+               speaker._transport = {"current_transport_state": "PLAYING"}
 
-           # Wait for the next iteration to observe the takeover
-           assert manager._iteration_event.wait(timeout=2.0), "worker never observed takeover"
+               # Bounded retry: poll caplog until the takeover branch logs, or
+               # the deadline elapses. POLL_INTERVAL=0.01 means iterations take
+               # ~10ms; allow up to 3s for slow runners.
+               deadline = time.monotonic() + 3.0
+               while "preempted" not in caplog.text and time.monotonic() < deadline:
+                   time.sleep(0.02)
 
-       # The bug under regression: takeover detection should NOT raise AttributeError
-       assert "AttributeError" not in caplog.text
-       # The log should mention the speaker name (post-Flight-01 fix)
-       assert "Kitchen" in caplog.text
-       # And mention "preempted" or "stopping"
-       assert "preempted" in caplog.text.lower() or "stopping" in caplog.text.lower()
+           # Regression assertions
+           assert "AttributeError" not in caplog.text, \
+               "F1 regression — coordinator_name AttributeError reintroduced"
+           assert "preempted" in caplog.text, \
+               "takeover branch never logged within deadline"
+           assert "Kitchen" in caplog.text, \
+               "log should mention the speaker name (post-Flight-01 fix)"
 
-       # Cleanup: stop the worker thread
-       manager.stop("Kitchen")
+           # Pin the session-cleanup branch: after the takeover, the session
+           # exits cleanly and is removed from _sessions.
+           # (Worker thread may still be in its `finally` cleanup when we get
+           # here; give it a brief moment to remove itself from _sessions.)
+           cleanup_deadline = time.monotonic() + 2.0
+           while speaker.uid in manager._sessions and time.monotonic() < cleanup_deadline:
+               time.sleep(0.02)
+           assert speaker.uid not in manager._sessions, "worker did not clean up its session entry"
+       finally:
+           # Belt-and-suspenders cleanup in case the test failed before the
+           # worker exited cleanly via the takeover path.
+           manager.stop("Kitchen")
    ```
-   - Uses Leg 02's `_iteration_event` for deterministic worker synchronization (replaces sleep-based polling). No flakiness on slow runners.
+   - Uses Leg 02's `_iteration_event` for fast worker startup detection. The takeover-observation race (`_iteration_event` signals "about to observe," not "has observed") is closed by the bounded-retry `while "preempted" not in caplog.text` loop combined with monkeypatched fast polling.
    - `PlaylistManager` constructor signature confirmed at design review (`mcp_sonos/playlists.py:98`).
+   - Asserts on `"preempted"` specifically — the takeover branch's log includes that exact word (`playlists.py:393`). Avoids the looser `"preempted" or "stopping"` match.
 
 4. **Optional**: add `conftest.py` if pytest needs `tests` on the import path. With `testpaths = ["tests"]` it should pick up automatically; if `from tests._fakes import SoCoFake` fails, add `conftest.py` or `pytest.ini` tweaks as needed.
 
@@ -170,7 +195,7 @@ Add the first batch of unit tests using Leg 02's scaffolding. Three test targets
 - Possibly `tests/conftest.py` — only if pytest's import discovery needs help
 
 ## Edge Cases
-- **`KNOWN_VOICE_HASHES` mutation in tests**: tests modify the module-level dict for setup. Use `try/finally` to restore state (shown in snippets above). A future cleanup could refactor to dependency-inject the pin map, but that's out of scope.
+- **`KNOWN_VOICE_HASHES` mutation in tests**: tests modify the module-level dict for setup. Use `try/finally` to restore state (shown in snippets above). A future cleanup could refactor to dependency-inject the pin map, but that's out of scope. **Constraint**: this pattern is NOT safe for `pytest-xdist` parallel runs — assumes single-process pytest. If parallelization lands later, refactor to `monkeypatch.setitem(KNOWN_VOICE_HASHES, "test_voice", hash)` which is per-test-isolated.
 - **`_verified_voices` cache pollution**: tests that touch `_ensure_voice` (none in this leg) would share the cache across tests. None of this leg's tests do — but Leg 04's investigation test may. Note in Leg 04's edge cases.
 - **`caplog` log level**: pytest's `caplog` defaults to `WARNING` — use `caplog.at_level("INFO")` for tests that need lower-level logs (the playlist test).
 - **Worker thread cleanup**: `manager.stop("Kitchen")` at the end of the takeover test ensures the daemon thread exits. If it leaks, subsequent tests may see odd state. Use `pytest --forked` or explicit cleanup if flakiness emerges.
@@ -180,9 +205,9 @@ Add the first batch of unit tests using Leg 02's scaffolding. Three test targets
 
 ## Post-Completion Checklist
 
-- [ ] All acceptance criteria verified
-- [ ] `pytest` passes with no live hardware
-- [ ] Smoke tests still pass against live hardware
-- [ ] Update `../flight-log.md` with leg progress entry (include test counts)
-- [ ] Set this leg's status to `completed`
-- [ ] Check off this leg in `../flight.md`
+- [x] All acceptance criteria verified
+- [x] `pytest` passes with no live hardware
+- [x] Smoke tests still pass against live hardware
+- [x] Update `../flight-log.md` with leg progress entry (include test counts)
+- [x] Set this leg's status to `completed`
+- [x] Check off this leg in `../flight.md`

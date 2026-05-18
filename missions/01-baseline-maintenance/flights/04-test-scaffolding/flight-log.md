@@ -58,6 +58,21 @@ Verified each scope item against current code at flight planning time (2026-05-1
 
 ## Leg Progress
 
+**2026-05-18 — Leg 03 (`03-first-unit-tests`) landed**
+
+- First batch of unit tests using Leg 02's scaffolding. **8 tests pass, 0 fail, 0 xfail.** No live hardware required — `SoCoFake` is the only "Sonos" present.
+- **`tests/test_urls.py`**: 3 tests covering `validate_http_url` per the leg snippet (happy path including case-insensitive scheme, bad scheme, missing netloc). Tightened the empty-string assertion to "raises ValueError" without pinning the message — empty string parses to no scheme, falls through to the bad-scheme branch first, so the precise message is not load-bearing.
+- **`tests/test_tts_verify.py`**: 4 tests covering `_hash_voice_file` (known content → known hash) and the three `_verify_or_log` branches (pin matches, mismatch quarantines, no-pin warns). Mutates `KNOWN_VOICE_HASHES` via `try/finally` to restore state — single-process-pytest assumption documented in the module docstring. Strengthened the happy-path assertion to also confirm the file is left in place (only the mismatch branch should rename). Asserted on the full `observed` hash in `caplog.text` rather than a 8-char prefix.
+- **`tests/test_playlists_takeover.py`**: 1 test pinning the F1 regression — `PlaylistManager` worker handles external takeover (different URI now playing) without raising `AttributeError`, names the speaker in the log, and cleanly exits its session. Uses `monkeypatch.setattr(playlists_mod, "POLL_INTERVAL", 0.01)` for ~10ms iterations + bounded-retry `while "preempted" not in caplog.text` loop (3s deadline) to close the `_iteration_event` "about-to-observe, not has-observed" race documented in Leg 02. Test passes deterministically — race closure works as designed.
+- **No source-code changes**. Per AC #7, source fixes only happen if a test surfaces a bug; all 8 tests passed first run. `mcp_sonos/` is untouched in this leg.
+- Verification (all hardware-independent):
+  1. `.venv/bin/python -m py_compile tests/test_urls.py tests/test_tts_verify.py tests/test_playlists_takeover.py` — clean.
+  2. `.venv/bin/pytest --collect-only` — 8 items collected across the 3 modules (also shows the existing zero-test layout from Leg 02 is now populated).
+  3. `.venv/bin/pytest -v` — `8 passed in 0.21s`, exit 0.
+  4. `grep -n "import soco\|from soco" tests/test_urls.py tests/test_tts_verify.py tests/test_playlists_takeover.py` — zero hits (exit 1). The takeover test reaches `playlists.py` which `from soco import SoCo`s for type hints, but `SoCo` is never instantiated by the test — `SoCoFake` covers the entire surface.
+- **Hardware-dependent verification deferred**: live-disable pytest re-run (e.g. `SONOS_IPS=10.255.255.255`) and smoke-script runs (`smoke_test.py`, `playlist_smoke.py`) remain hardware-touching steps for the post-flight verification pass. The hardware-free property is established by the test sources themselves (no `import soco` outside type hints; no network calls; `SoCoFake` is the only speaker object touched).
+- Leg status: `ready` → `in-flight` → `landed`. Not committed (handoff to reviewer per `/agentic-workflow` Phase 2d).
+
 **2026-05-18 — Leg 02 (`02-test-scaffolding-and-di-refactor`) landed**
 
 - Load-bearing architectural refactor. DI factory pattern introduced; SoCoFake scaffolding + pytest config landed alongside.
