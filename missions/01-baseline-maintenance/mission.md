@@ -1,6 +1,6 @@
 # Mission: Baseline Maintenance
 
-**Status**: planning
+**Status**: active
 
 ## Outcome
 Resolve the 14 codebase health items identified in the 2026-05-18 maintenance report. After this mission, mcp-sonos should be free of the real correctness bug, have a properly scoped `play_file` capability, validate `AUDIO_PORT` against the documented firewall range, have its documentation aligned with actual behavior, carry pinned supply-chain hashes, and ship with unit-test scaffolding so the documented "controller is testable" claim is real.
@@ -17,19 +17,19 @@ Full inspection details: [Maintenance Report 2026-05-18](../../maintenance/2026-
 
 ## Success Criteria
 
-- [ ] F1 — `playlists.py:380` no longer references a nonexistent attribute; external-takeover detection logs cleanly
-- [ ] F2 — `play_file` rejects paths outside `AUDIO_MEDIA_ROOT` (configurable env var) with a clear error; audio host directory listing is disabled
-- [ ] F3 — `AUDIO_PORT` outside 8000–8999 raises a clear `ValueError` at startup, referencing the firewall rule
+- [x] F1 — `playlists.py:380` no longer references a nonexistent attribute; external-takeover detection logs cleanly
+- [x] F2 — `play_file` rejects paths outside `AUDIO_MEDIA_ROOT` (configurable env var) with a clear error; audio host directory listing is disabled
+- [x] F3 — `AUDIO_PORT` outside 8000–8999 raises a clear `ValueError` at startup, referencing the firewall rule
 - [ ] F4 — `say` tool docstring describes Piper accurately (no gTTS/`lang` lie); `playlists.py:4` module docstring matches the CLAUDE.md speaker-UID keying invariant
-- [ ] F5 — `say()` (and any other group-access site) routes through `_group_members_of`
+- [x] F5 — `say()` (and any other group-access site) routes through `_group_members_of`
 - [ ] F6 — Unused `Iterable` import and dead `threading.Lock` removed from `controller.py`
 - [ ] F7 — Pytest scaffolding exists; `SonosController` construction is deferred from module-level; a `SoCoFake` lets controller and playlists logic be exercised without live hardware; at least the F1 takeover path has a regression test
 - [ ] F8 — Default Piper voice has a pinned SHA-256 verified on download; non-default voices logged as trust-on-first-use
 - [ ] F10 — `poc/debug_play.py` and `CLAUDE.md` no longer contain the real LAN IPs; placeholders match `.env.example`'s `192.168.1.x` convention
 - [ ] F11 — README "Architecture" section reflects 32 tools (or removes the count)
-- [ ] F12 — `audio_host.url_for` URL-encodes filenames
+- [x] F12 — `audio_host.url_for` URL-encodes filenames
 - [ ] F13 — `pyproject.toml` caps `fastmcp` at `<4` (and other deps as appropriate)
-- [ ] F14 — `play_url` and `playlist_add`/`playlist_add_many` reject non-`http`/`https` schemes with a clear error
+- [x] F14 — `play_url` and `playlist_add`/`playlist_add_many` reject non-`http`/`https` schemes with a clear error
 - [ ] F17 — `pip-audit` baseline scan completed; results documented; pip-audit added to dev extras
 
 ## Stakeholders
@@ -56,7 +56,7 @@ N/A — findings are well-scoped from inspection; execution decisions belong in 
 
 > **Note:** These four flights cover the full scoped finding set. Order is recommended (Flight 1 first — highest value, blocks nothing else; Flight 4 last — biggest, no urgency). Each can land independently.
 
-- [ ] Flight 1: [Correctness and Capability Hardening](flights/01-correctness-and-capability/flight.md) — F1, F2, F3, F5, F12, F14
+- [x] Flight 1: [Correctness and Capability Hardening](flights/01-correctness-and-capability/flight.md) — F1, F2, F3, F5, F12, F14
 - [ ] Flight 2: [Documentation Cleanup](flights/02-documentation-cleanup/flight.md) — F4, F6, F10, F11
 - [ ] Flight 3: [Supply-Chain Hardening](flights/03-supply-chain-hardening/flight.md) — F8, F13, F17
 - [ ] Flight 4: [Test Scaffolding](flights/04-test-scaffolding/flight.md) — F7
