@@ -84,6 +84,13 @@ file when running from source. See `.env.example` in the repo.
 | `PIPER_VOICE` | `en_US-lessac-medium` | Any [Piper voice](https://huggingface.co/rhasspy/piper-voices). Format: `<lang>-<speaker>-<quality>`. Higher quality voices are larger; "medium" is a good balance (~60 MB). |
 | `PIPER_DATA_DIR` | `~/.cache/mcp-sonos/voices` | Where voice models are cached. Set this if you want the cache to persist somewhere specific (e.g., a shared volume across container restarts). |
 
+The default voice (`en_US-lessac-medium`) is pinned to a known SHA-256
+and verified on download and on the first use of an existing cached
+file each process; mismatches are quarantined as `<voice>.onnx.suspect`
+and raise. Non-default voices are trust-on-first-use — a `warning` log
+prints the observed hash so you can add it to `KNOWN_VOICE_HASHES` in
+`mcp_sonos/tts.py` to pin it.
+
 ### Picking values
 
 - **Same machine as the server you ran from source**: leave everything empty, auto-detection handles it.
