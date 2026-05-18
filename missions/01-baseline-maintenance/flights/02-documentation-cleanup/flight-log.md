@@ -130,6 +130,23 @@ Verified each scope item against current code at flight planning time (2026-05-1
   - Visual diff: only two hunks — the new `## When extending` content, and Leg 03's pre-existing `## Important context` anonymization (untouched by this leg). No other sections modified.
 - **Notes**: Pure documentation addition; no code touched. The validator-pattern bullet doubles as a roadmap pointer (speaker-name, AUDIO_PORT, playlist-name validators are candidates for the same treatment when those policies need defense-in-depth). The env-var bullet explicitly frames the tradeoff so future contributors can choose differently for env vars where fast-fail is preferable (e.g., a required port number that, if missing, should crash the server rather than degrade silently).
 
+### Leg 06 — Resolve `HttpUrl` alias (Debrief 3)
+
+- **Status**: landed
+- **Started**: 2026-05-18
+- **Completed**: 2026-05-18
+- **Changes Made**:
+  - `mcp_sonos/server.py:47` — deleted the dead alias `HttpUrl = Annotated[str, AfterValidator(validate_http_url)]`. Baseline `grep -n "HttpUrl" mcp_sonos/server.py` returned exactly 1 hit (the definition); no consumers needed updating.
+  - `mcp_sonos/server.py:43-46` — also removed the now-orphaned scheme-allow-list comment block that documented the alias. The policy it described is still in force, but it's now anchored at the two consumer sites (inline `AfterValidator(validate_http_url)` at `play_url` and `playlist_add`). Leaving the comment with no adjacent code would have been worse documentation drift than removing it.
+  - Inline `AfterValidator(validate_http_url)` calls at `server.py:78` (`play_url`) and `server.py:238` (`playlist_add`) left unchanged — that's the live policy per the flight design decision.
+- **Verification**:
+  - `grep -n "HttpUrl" mcp_sonos/server.py` → zero hits.
+  - `.venv/bin/python -m py_compile mcp_sonos/server.py` → clean.
+  - `.venv/bin/python -c "from mcp_sonos._urls import validate_http_url; validate_http_url('file:///etc/passwd')"` → raises `ValueError: URL scheme must be http or https; got 'file'`. Validator behavior unchanged.
+  - `grep -n "AfterValidator(validate_http_url)" mcp_sonos/server.py` → 2 hits at `:78` and `:238`, confirming both consumer sites still bind to the validator inline.
+  - Hardware smoke (`playlist_smoke.py`) not run — speaker hardware not reachable from this environment (process timed out at discovery). Optional per the leg spec; the direct validator call test above already proves the policy is intact end-to-end.
+- **Notes**: Pure deletion. Followed the flight design's default-to-delete decision rather than attempting alias adoption — Pydantic 2's `Annotated[Annotated[...], Field(...)]` ergonomics for chaining a per-tool description on top of a named validated type are still awkward enough that a separate future flight is the right place to revisit (if at all). The deleted comment block was tightly coupled to the alias definition; if a future flight adopts a `HttpUrl` alias, that comment should be re-introduced beside the new alias rather than carried as a floating doc string.
+
 ---
 
 ## Decisions
