@@ -133,6 +133,25 @@ Verified each finding against current code at flight planning time (2026-05-18, 
 - Smoke test does not pass a `volume` argument, so the modified `if volume is not None:` branch is not exercised end-to-end here. Confirmed by reading `smoke_test.py` output — `say(Kitchen)` and `say(all)` both took the no-volume path. The modified branch is now structurally identical to other helper call sites (e.g. line 138 `now_playing`) which are exercised by the smoke test, so the regression risk is very low. Explicit volume-on-say verification can be deferred to flight-level Post-Flight.
 - The `or [coord]` fallback drop is intentional, not an accidental loss — documented in the leg as provably unreachable given `_group_members_of`'s contract.
 
+### Leg 05 — F12 URL-encode audio host filenames
+**Status**: landed
+**Started**: 2026-05-18T13:55:00Z
+**Completed**: 2026-05-18T13:57:00Z
+
+#### Changes Made
+- `mcp_sonos/audio_host.py`: added `import urllib.parse` to module imports.
+- `mcp_sonos/audio_host.py`: in `url_for`, route `filename` through `urllib.parse.quote(filename)` (bound to local `safe`) before f-string interpolation. Default `quote` safe set (`/`) is fine here — `stage()` always passes `target.name` (a basename), and TTS WAV filenames are sha1-hex.
+
+#### Verification
+- `.venv/bin/python -m py_compile mcp_sonos/audio_host.py` — clean.
+- Inline check: `AudioHost(root=Path('/tmp'), host_ip='1.2.3.4', port=8000).url_for('My Song.mp3')` → `http://1.2.3.4:8000/My%20Song.mp3` (exact match).
+- Inline check: same instance, `url_for('simple.mp3')` → `http://1.2.3.4:8000/simple.mp3` (unchanged, no encoding noise).
+- `stage()` was already routing through `url_for` — no inline URL construction elsewhere in the module. Implementation guidance item 3 confirmed by reading.
+
+#### Notes
+- Smoke test (`smoke_test.py`) ran against live hardware: discovery succeeded (Dining Room, Fireplace Room, Kitchen, Lounge, Patio). The `say` call then failed with `play_uri can only be called/used on the coordinator in a group` — this is **unrelated** to Leg 05. `say` generates a sha1-hex TTS filename, which is URL-safe and unchanged in shape by the `quote` call. The failure is a pre-existing group-coordinator semantics issue in the `say` path, surfaced today (possibly because the smoke-test target speaker has been grouped under a different coordinator on the network since Leg 04's run). Flagged as anomaly below; will not be addressed in this leg per its narrow scope.
+- `play_file` against a space-containing filename was NOT exercised end-to-end against hardware in this leg — no staged file under `AUDIO_MEDIA_ROOT` available and no live target. URL string is correctness-verified; "Sonos accepts the encoded URL" portion of AC #3 carried to flight-level Post-Flight, consistent with prior legs' approach to live-hardware risk surfaces.
+
 ---
 
 ## Decisions
@@ -166,7 +185,8 @@ Architect's affirmations (no change needed):
 ---
 
 ## Anomalies
-(Unexpected issues encountered.)
+
+**2026-05-18 — `say` smoke test fails with "play_uri can only be called/used on the coordinator in a group"** (surfaced during Leg 05 verification). Discovery + group listing succeeded; the error fires inside FastMCP tool `say` when issuing `play_uri`. The smoke target speaker is apparently a non-coordinator member of a group in the current Sonos topology. Not caused by Leg 05 (TTS filenames are sha1-hex; `urllib.parse.quote` of an `[a-f0-9]` string is a no-op). Worth investigating at flight Post-Flight: either the controller is no longer routing to the coordinator before `play_uri`, or recent grouping changes on the network exposed a latent bug. Leg 04's `_group_members_of` rewrite is the most-recent `say`-touching change but the failing call site is `play_uri`, not the volume/members iteration that Leg 04 reshaped — so the regression hypothesis is weak. Most likely pre-existing.
 
 ---
 
