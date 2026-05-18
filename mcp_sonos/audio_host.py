@@ -61,6 +61,10 @@ class AudioHost:
             def log_message(self, fmt, *args):  # silence per-request noise
                 return
 
+            def list_directory(self, path):  # block GET / enumeration
+                self.send_error(404)
+                return None
+
         self._httpd = http.server.HTTPServer(("0.0.0.0", self.port), Handler)
         self._thread = threading.Thread(
             target=self._httpd.serve_forever,

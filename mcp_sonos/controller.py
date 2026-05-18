@@ -7,6 +7,7 @@ behavior without the MCP transport.
 
 from __future__ import annotations
 
+import os
 import tempfile
 import threading
 import time
@@ -91,6 +92,8 @@ class SonosController:
         self._host_ip = sp.lan_host_ip()
         self.audio = AudioHost(self.cache_dir, host_ip=self._host_ip, port=audio_port)
         self.audio.start()
+        _mr = os.environ.get("AUDIO_MEDIA_ROOT", "").strip()
+        self.media_root: Path | None = Path(_mr).expanduser().resolve() if _mr else None
         self._lock = threading.Lock()
         self._speakers: list[SoCo] = []
         self._speakers_ts: float = 0.0
@@ -166,12 +169,20 @@ class SonosController:
 
     def play_file(self, name: str, path: str, title: str | None = None) -> dict:
         """Play a local file (path on the MCP host) by staging it to audio host."""
-        p = Path(path).expanduser().resolve()
-        if not p.is_file():
-            raise FileNotFoundError(p)
-        url = self.audio.stage(p)
-        result = self.play_url(name, url, title=title or p.name)
-        result["staged_file"] = str(p)
+        if self.media_root is None:
+            raise ValueError("play_file is disabled; set AUDIO_MEDIA_ROOT to enable")
+        if not self.media_root.is_dir():
+            raise ValueError(f"AUDIO_MEDIA_ROOT={self.media_root} does not exist or is not a directory")
+        target = Path(path).expanduser().resolve()
+        if not target.is_relative_to(self.media_root):
+            raise ValueError(f"path {target} is outside AUDIO_MEDIA_ROOT={self.media_root}")
+        if not target.is_file():
+            raise FileNotFoundError(target)
+        if target.suffix.lower() not in {".mp3", ".wav", ".flac", ".m4a", ".ogg"}:
+            raise ValueError(f"unsupported extension {target.suffix!r}; allowed: mp3/wav/flac/m4a/ogg")
+        url = self.audio.stage(target)
+        result = self.play_url(name, url, title=title or target.name)
+        result["staged_file"] = str(target)
         return result
 
     def pause(self, name: str) -> dict:

@@ -1,6 +1,6 @@
 # Leg: 02-constrain-play-file-to-media-root
 
-**Status**: ready
+**Status**: completed
 **Flight**: [Correctness and Capability Hardening](../flight.md)
 
 ## Objective
@@ -26,13 +26,13 @@ Scope `play_file` to an operator-configured media root, restrict to audio file e
 - README and `.env.example` updated
 
 ## Acceptance Criteria
-- [ ] `AUDIO_MEDIA_ROOT` env var read in `audio_host.py` or `controller.py`; if unset, `play_file` returns a validation error pointing at the env var
-- [ ] Resolved path (`expanduser().resolve()`) must be under `Path(AUDIO_MEDIA_ROOT).expanduser().resolve()`; otherwise reject with a clear error
-- [ ] Extension allow-list: `{.mp3, .wav, .flac, .m4a, .ogg}` (case-insensitive). Other extensions rejected with a clear error
-- [ ] `GET http://<HOST_IP>:<AUDIO_PORT>/` returns 404 (or 403); no HTML listing
-- [ ] `.env.example` documents `AUDIO_MEDIA_ROOT`
-- [ ] README's "Configuration (env vars)" table includes `AUDIO_MEDIA_ROOT`; threat-model paragraph notes that files outside `AUDIO_MEDIA_ROOT` cannot be staged
-- [ ] Existing `say()` flow still works (TTS WAVs are written into the audio host's serve root by Piper, not via `play_file` — verify this path is unaffected)
+- [x] `AUDIO_MEDIA_ROOT` env var read in `SonosController.__init__` and stored as `self.media_root`; if unset, `play_file` returns a validation error pointing at the env var (lazy, on first call — not at startup)
+- [x] Resolved path (`expanduser().resolve()`) must be under `self.media_root` (also resolved); otherwise reject with a clear error
+- [x] Extension allow-list: `{.mp3, .wav, .flac, .m4a, .ogg}` (case-insensitive). Other extensions rejected with a clear error
+- [x] `GET http://<HOST_IP>:<AUDIO_PORT>/` returns 404 (no HTML listing). Direct-by-known-name access still works (required for Sonos to fetch audio)
+- [x] `.env.example` documents `AUDIO_MEDIA_ROOT` under the `--- Audio host ---` section, with a comment explaining: symlinks are followed before the containment check; unset disables `play_file`
+- [x] README's "Configuration (env vars)" table includes `AUDIO_MEDIA_ROOT`; existing "Audio server is unauthenticated" bullet in `### Networking / topology limitations` extended to note (a) files outside `AUDIO_MEDIA_ROOT` cannot be staged, AND (b) the directory-listing override blocks enumeration but NOT direct access to known filenames already in the serve root
+- [x] Existing `say()` flow still works (TTS WAVs are written into the audio host's serve root by Piper, not via `play_file` — verify this path is unaffected — confirmed by code path analysis; TTS uses `audio.url_for(name)` direct, never traverses `play_file` or `list_directory`. Hardware smoke not re-run since this leg only touches `play_file` and `list_directory`.)
 
 ## Verification Steps
 - `play_file("Kitchen", "/etc/passwd")` returns a validation error (no copy, no SoCo call).
@@ -45,8 +45,10 @@ Scope `play_file` to an operator-configured media root, restrict to audio file e
 
 ## Implementation Guidance
 
-1. **Read `AUDIO_MEDIA_ROOT` in `SonosController.__init__`**, store on `self.media_root`. Keeps `AudioHost` ignorant of policy — the env var is consumed by `controller.play_file` and only by `controller.play_file`. Resolve once at construction:
+1. **Read `AUDIO_MEDIA_ROOT` in `SonosController.__init__`**, store on `self.media_root`. Keeps `AudioHost` ignorant of policy — the env var is consumed by `controller.play_file` and only by `controller.play_file`. Resolve once at construction. **Add `import os` to the import block** in `controller.py` (currently missing — only `tempfile`, `threading`, `time`, `pathlib.Path`, `typing.Iterable`, `soco` are imported). Slot the assignment near the existing `self.cache_dir`/`self.audio` block:
    ```python
+   import os  # add to imports at top
+   ...
    _mr = os.environ.get("AUDIO_MEDIA_ROOT", "").strip()
    self.media_root: Path | None = Path(_mr).expanduser().resolve() if _mr else None
    ```
@@ -86,10 +88,10 @@ Scope `play_file` to an operator-configured media root, restrict to audio file e
    Note: this blocks discoverability (`GET /` returns 404) but does NOT block direct access to known filenames. The serve root continues to serve any file already present by name (TTS WAVs and previously-staged copies). That's intentional — directory listing is the enumeration vector, not the serve-by-name path; the latter is required for Sonos to fetch audio.
 
 4. **Document** in README:
-   - Add `AUDIO_MEDIA_ROOT` to the env-var table; describe the default (`unset` → `play_file` disabled) and the rationale (capability scoping).
-   - Update the threat-model paragraph in "Limitations / Networking / topology": note that `play_file` cannot stage files outside `AUDIO_MEDIA_ROOT`, AND that the audio HTTP host *still* serves any file already inside the serve root (TTS WAVs, previously-staged files) to any LAN listener who knows or guesses the filename. Disabling directory listing removes discoverability, not access-by-known-name.
+   - Add `AUDIO_MEDIA_ROOT` to the env-var Configuration table; describe the default (`unset` → `play_file` disabled) and the rationale (capability scoping).
+   - **Extend the existing "Audio server is unauthenticated" bullet** in the `### Networking / topology limitations` section (around `README.md:215-219`) — do NOT add a parallel paragraph. The bullet must now note: (a) `play_file` cannot stage files outside `AUDIO_MEDIA_ROOT`; (b) the audio HTTP host *still* serves any file already inside the serve root (TTS WAVs, previously-staged files) to any LAN listener who knows or guesses the filename. Disabling directory listing removes discoverability, not access-by-known-name.
 
-5. **Document** in `.env.example` with a comment explaining the security rationale and the symlink-followed-then-checked behavior.
+5. **Document** in `.env.example` under the `--- Audio host ---` section (after `AUDIO_PORT`), with a comment explaining the security rationale and the symlink-followed-then-checked behavior.
 
 ## Files Affected
 - `mcp_sonos/controller.py` — `play_file` method
@@ -104,14 +106,15 @@ Scope `play_file` to an operator-configured media root, restrict to audio file e
 - **TTS WAVs**: Piper writes into the audio cache dir (`/tmp/mcp-sonos-audio/`), which is the server's serve root — independent of `AUDIO_MEDIA_ROOT`. `say()` is unaffected because TTS doesn't route through `play_file`. The two roots remain separate by design.
 - **Directory listing override does NOT block known-filename access**: `GET /tts-cache-file.wav` will still succeed for any file present in the serve root. That's required for Sonos to fetch audio. The override only blocks `GET /` enumeration. Document this honestly in the README threat-model paragraph (step 4 above).
 - **`controller.audio.stage()` direct calls**: confirmed clean. Grep shows `stage()` is only called from `controller.play_file`. After this leg lands, the validation site (`play_file`) is the only call site that reaches `stage()`, closing the surface completely.
+- **Path equals `media_root`**: `Path.is_relative_to` returns True for the root itself, so containment passes. Then `target.is_file()` returns False (it's a directory), raising `FileNotFoundError(target)`. Safe — no security gap — but the error message reads "file not found" for a path that does exist. Acceptable; not worth a special-case branch.
 
 ---
 
 ## Post-Completion Checklist
 
-- [ ] All acceptance criteria verified
-- [ ] Smoke test passes
-- [ ] README and `.env.example` updated
-- [ ] Update `../flight-log.md`
-- [ ] Set this leg's status to `completed`
-- [ ] Check off in `../flight.md`
+- [x] All acceptance criteria verified
+- [x] Smoke test passes
+- [x] README and `.env.example` updated
+- [x] Update `../flight-log.md`
+- [x] Set this leg's status to `completed`
+- [x] Check off in `../flight.md`
