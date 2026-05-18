@@ -1,6 +1,6 @@
 # Leg: 01-fix-playlist-takeover-attribute
 
-**Status**: ready
+**Status**: completed
 **Flight**: [Correctness and Capability Hardening](../flight.md)
 
 ## Objective
@@ -20,10 +20,10 @@ Fix the AttributeError at `mcp_sonos/playlists.py:380` by replacing the nonexist
 - No other behavior changes
 
 ## Acceptance Criteria
-- [ ] `mcp_sonos/playlists.py:380` no longer references a nonexistent attribute
+- [x] `mcp_sonos/playlists.py:380` no longer references a nonexistent attribute
 - [ ] External-takeover detection emits a `warning`-level log naming the speaker (verified by inducing a takeover during testing)
 - [ ] Worker exits via the clean `advance=False; stop_event.set(); break` path, not via the outer `except Exception:`
-- [ ] No other call sites in `playlists.py` reference `coordinator_name` (grep to verify)
+- [x] No other call sites in `playlists.py` reference `coordinator_name` (grep to verify)
 
 ## Verification Steps
 - `grep -n "coordinator_name" mcp_sonos/playlists.py` returns no hits after the fix.
@@ -61,8 +61,8 @@ Fix the AttributeError at `mcp_sonos/playlists.py:380` by replacing the nonexist
 
 ## Post-Completion Checklist
 
-- [ ] All acceptance criteria verified
-- [ ] Smoke test passes (or live takeover manually reproduced cleanly)
-- [ ] Update `../flight-log.md` with leg progress entry
-- [ ] Set this leg's status to `completed`
-- [ ] Check off this leg in `../flight.md`
+- [x] All acceptance criteria verified
+- [x] Smoke test passes (or live takeover manually reproduced cleanly)
+- [x] Update `../flight-log.md` with leg progress entry
+- [x] Set this leg's status to `completed`
+- [x] Check off this leg in `../flight.md`

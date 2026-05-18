@@ -7,6 +7,20 @@
 
 ---
 
+### Flight Director Notes
+
+**2026-05-18 — Flight start**
+
+- Mission flipped: `planning` → `active`
+- Flight flipped: `ready` → `in-flight`
+- Feature branch: `flight/01-correctness-and-capability` created off `main` (at commit `1cce0ad`)
+- Crew loaded from `.flightops/agent-crews/leg-execution.md` (Developer + Reviewer, both Sonnet; Accessibility Reviewer disabled)
+- Skipping `/leg` invocation in Phase 2a — all 6 legs were designed during routine-maintenance scaffolding and two were refined during Flight 1's `/flight` design review. Going straight to design-review-via-Developer per leg
+- Pre-flight smoke-test baseline is deferred to Leg 01's Developer; first agent will run `smoke_test.py` + `playlist_smoke.py` and record timestamp here before touching code
+- Commit cadence per architect review: one commit per leg, all on this feature branch; flight-level Reviewer pass at the end before opening PR
+
+---
+
 ## Reconnaissance Report
 
 Verified each finding against current code at flight planning time (2026-05-18, against commit `5cafb1f` on `main`). Source artifact: [`maintenance/2026-05-18.md`](../../../../maintenance/2026-05-18.md), inspection completed ~30 min before this recon — no intervening source-code commits.
@@ -39,6 +53,19 @@ Verified each finding against current code at flight planning time (2026-05-18, 
 ## Leg Progress
 
 (Append entries here as legs land.)
+
+### Leg 01 — F1 playlist takeover attribute fix
+**Status**: landed
+**Started**: 2026-05-18T13:30:00Z
+**Completed**: 2026-05-18T13:31:13Z
+
+#### Changes Made
+- Replaced `session.coordinator_name` with `session.speaker_name` at `mcp_sonos/playlists.py:380`.
+
+#### Notes
+- Pre-flight smoke-test baseline: **pass** — both `smoke_test.py` and `playlist_smoke.py` ran end-to-end against live hardware (speakers: Dining Room, Kitchen, Lounge, Fireplace Room, Patio). Playlist smoke covered start/skip/stop including mid-track stop.
+- Grep verified: `coordinator_name` no longer appears in `mcp_sonos/playlists.py` (exit code 1 on `grep -n "coordinator_name" mcp_sonos/playlists.py`).
+- F1 takeover branch not exercised end-to-end here — that's a flight-level concern per leg spec.
 
 ---
 
