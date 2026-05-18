@@ -80,6 +80,7 @@ file when running from source. See `.env.example` in the repo.
 | `SONOS_IPS` | _(empty — auto-discover via SSDP)_ | Comma-separated speaker IPs. **Recommended** when SSDP multicast is unreliable (WSL2 default networking, Docker bridges, isolated guest VLANs, mesh WiFi with broken IGMP) or just for deterministic startup. Bypasses SSDP entirely. Get the IPs from your router or the Sonos app. |
 | `HOST_IP` | _(auto-detected by routing probe + interface scan)_ | LAN IP the audio HTTP server should advertise to speakers. Override when auto-detection picks the wrong interface — common when the host has multiple interfaces (Docker, VPN, WSL2 in NAT mode). Must be an IP **the speakers can reach**. |
 | `AUDIO_PORT` | _(first free TCP port in 8000-8999)_ | Pin the audio server to a specific port. Useful when your firewall rule allows only one port instead of a range, or for stable logs. |
+| `AUDIO_MEDIA_ROOT` | _(unset — `play_file` disabled)_ | Directory the `play_file` tool is allowed to stage from. Capability scoping against a misaligned agent: when unset, `play_file` returns an error and stages nothing. Paths are resolved (symlinks followed) before the containment check; extensions are restricted to `.mp3`/`.wav`/`.flac`/`.m4a`/`.ogg`. Does not secure the audio HTTP host itself — see [Networking / topology limitations](#networking--topology-limitations). |
 | `PIPER_VOICE` | `en_US-lessac-medium` | Any [Piper voice](https://huggingface.co/rhasspy/piper-voices). Format: `<lang>-<speaker>-<quality>`. Higher quality voices are larger; "medium" is a good balance (~60 MB). |
 | `PIPER_DATA_DIR` | `~/.cache/mcp-sonos/voices` | Where voice models are cached. Set this if you want the cache to persist somewhere specific (e.g., a shared volume across container restarts). |
 
@@ -216,7 +217,15 @@ Read these before you wire the server into an agent — they save real time.
   HTTP server (TTS cache + staged `play_file` content) is readable by
   anyone on the LAN who can reach the port. The Windows Firewall rule
   scopes it to your subnet, but on a hostile LAN treat it as
-  effectively public.
+  effectively public. Two narrowings worth knowing: (a) `play_file`
+  cannot stage files outside `AUDIO_MEDIA_ROOT` (and rejects calls
+  entirely when that env var is unset), so a misaligned agent cannot
+  copy e.g. `~/.ssh/id_rsa` into the serve root; (b) directory listing
+  is disabled — `GET /` returns 404, so a LAN listener cannot enumerate
+  what's inside the serve root. Direct access by known filename still
+  works (Sonos needs that to fetch audio), so any file already in the
+  serve root remains readable to anyone who can guess or learn its
+  name.
 - **Discovery cache is 30 s.** A speaker rename or a new speaker
   showing up takes up to 30 s to reflect in `list_speakers` unless
   the agent calls `refresh_speakers` explicitly.

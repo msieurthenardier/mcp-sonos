@@ -93,7 +93,7 @@ Six discrete legs, each scoped to one finding. F2 is the largest (env var + path
 ### Legs
 
 - [x] `01-fix-playlist-takeover-attribute` — F1: fix `playlists.py:380` AttributeError
-- [ ] `02-constrain-play-file-to-media-root` — F2: AUDIO_MEDIA_ROOT + extension allow-list + disable directory listing
+- [x] `02-constrain-play-file-to-media-root` — F2: AUDIO_MEDIA_ROOT + extension allow-list + disable directory listing
 - [ ] `03-validate-audio-port-range` — F3: enforce 8000–8999 at parse time
 - [ ] `04-route-say-through-group-members-helper` — F5: `say()` uses `_group_members_of`
 - [ ] `05-url-encode-audio-host-filenames` — F12: `urllib.parse.quote` in `url_for`

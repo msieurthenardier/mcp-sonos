@@ -67,6 +67,32 @@ Verified each finding against current code at flight planning time (2026-05-18, 
 - Grep verified: `coordinator_name` no longer appears in `mcp_sonos/playlists.py` (exit code 1 on `grep -n "coordinator_name" mcp_sonos/playlists.py`).
 - F1 takeover branch not exercised end-to-end here — that's a flight-level concern per leg spec.
 
+### Leg 02 — F2 constrain play_file to AUDIO_MEDIA_ROOT
+**Status**: landed
+**Started**: 2026-05-18T13:35:00Z
+**Completed**: 2026-05-18T13:42:00Z
+
+#### Changes Made
+- `mcp_sonos/controller.py`: added `import os`; in `SonosController.__init__`, read `AUDIO_MEDIA_ROOT` env var (after the `self.audio` block) and store on `self.media_root: Path | None` (resolved via `Path.expanduser().resolve()`, or `None` when unset/empty); replaced `play_file` body with five-step validation cascade — media_root None → not-a-dir → containment via `Path.is_relative_to` → `is_file` → extension allow-list `{.mp3, .wav, .flac, .m4a, .ogg}` (case-insensitive via `target.suffix.lower()`) — before calling `self.audio.stage(target)`.
+- `mcp_sonos/audio_host.py`: added `list_directory(self, path)` override to the inline `Handler` subclass in `start()`; returns 404 via `self.send_error(404); return None`. Blocks `GET /` enumeration without affecting direct-by-name access.
+- `.env.example`: added `AUDIO_MEDIA_ROOT` block under `--- Audio host ---` after `AUDIO_PORT`, with comment explaining symlink-followed-then-checked containment, the extension allow-list, the disabled-when-unset default, and the explicit "this does NOT secure the audio HTTP host itself" honesty.
+- `README.md`: added `AUDIO_MEDIA_ROOT` row to the Configuration env-var table; extended the existing "Audio server is unauthenticated" bullet in `### Networking / topology limitations` to document both narrowings (play_file scoping; directory-listing block) and to be explicit that direct-by-known-name access still works.
+
+#### Verification
+- `py_compile mcp_sonos/controller.py mcp_sonos/audio_host.py` — clean.
+- `from mcp_sonos.controller import SonosController` — clean import.
+- Ad-hoc test script (started controller with unset env, then `AUDIO_MEDIA_ROOT=/tmp`):
+  - `GET http://127.0.0.1:8000/` → 404 (directory listing override works).
+  - `play_file(...)` with `media_root=None` → `ValueError("play_file is disabled; set AUDIO_MEDIA_ROOT to enable")`.
+  - `play_file("any", "/etc/passwd")` with `AUDIO_MEDIA_ROOT=/tmp` → `ValueError("path /etc/passwd is outside AUDIO_MEDIA_ROOT=/tmp")`.
+  - `play_file("any", "/tmp/script.sh")` (exists) → `ValueError("unsupported extension '.sh'; allowed: mp3/wav/flac/m4a/ogg")`.
+  - `play_file("any", "/tmp/does-not-exist-123abc.mp3")` → `FileNotFoundError`.
+
+#### Notes
+- Live-hardware smoke tests not re-run: F2 only touches the `play_file` path and the audio host's directory-listing handler. `say()` uses Piper → cache_dir → `audio.url_for(name)`, which never traverses `play_file` or `list_directory` (HTTP serves the WAV by direct filename). The pre-flight smoke baseline (Leg 01) covers the `say()` regression surface; no new live-hardware risk introduced here.
+- Validation lives in `controller.play_file` (per leg spec — keeps `AudioHost` policy-agnostic). `audio.stage()` is still callable directly from Python, but grep confirms `play_file` is the only caller in the repo.
+- The `list_directory` override blocks `GET /` and any directory request but does NOT affect `GET /<filename>` — that's the documented and required behavior for Sonos to fetch audio.
+
 ---
 
 ## Decisions
