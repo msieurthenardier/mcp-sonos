@@ -3,7 +3,39 @@
 **Flight**: [Test Scaffolding](flight.md)
 
 ## Summary
-(Filled in during execution.)
+
+Flight landed 2026-05-18. Final flight of mission `01-baseline-maintenance`. All 5 legs (4 planned + 1 mid-flight scope expansion) completed and committed (1 flight-start + 5 leg commits). Reviewer confirmed `[HANDOFF:confirmed]` over cumulative changes with no issues.
+
+| Leg | Scope | Commit | Status |
+|-----|-------|--------|--------|
+| start | flip status + Flight Director Notes | `7d1dfab` | — |
+| 01 | Flight prereqs — SSDP-deterministic smoke + `controller.py:86` docstring | `c1d8799` | completed |
+| 02 | DI refactor + SoCoFake + pytest config + `_iteration_event` (F7 backbone) | `67e3f15` | completed |
+| 03 | First unit tests — `validate_http_url`, `_verify_or_log`, F1 takeover (8 tests) | `7fb5494` | completed |
+| 04 | Fix `say()` coordinator bug — `_play_uri_with_stale_coord_retry` + 2 regression tests | `6088f2f` | completed |
+| 05 | Fix smoke scripts broken by Leg 02 DI refactor (scope expansion) | `f73e772` | completed |
+
+**Mission close-out**:
+- F7 success criterion **resolved** — pytest scaffolding live, 10 tests passing hardware-free
+- `say()` coordinator bug **resolved** — Flight 04 Leg 04 fix + 2 regression tests
+- Smoke-script DI-refactor regression **resolved** — Flight 04 Leg 05 fix
+- Mission state: **14/14 success criteria complete**. All 4 flights `[x]`. Mission status flipped `active` → `completed`
+
+**Test-metrics baseline established for future maintenance cycles**:
+
+| Metric | Flight 01 | Flight 02 | Flight 03 | Flight 04 |
+|--------|-----------|-----------|-----------|-----------|
+| Unit tests | 0 | 0 | 0 | **10** |
+| pytest available | no | no | no | **yes** |
+| pytest wall-clock | n/a | n/a | n/a | **~0.21s** |
+| Test pass/fail | n/a | n/a | n/a | **10/0** |
+| pip-audit available | no | no | yes | yes |
+| pip-audit CVEs | n/a | n/a | 0/0/0/0 (104 pkgs) | (same baseline; not re-run this flight) |
+| Hardware-free regression net | no | no | partial | **yes (pytest)** |
+
+**Smoke scripts NOT re-run in this debrief** — hardware unreachable from the execution environment (192.168.1.51-55 are placeholder IPs; the maintainer's actual LAN differs). The Leg 04 say() fix has not been verified against live hardware. Pytest is the substitute regression net per F7's design.
+
+**Mid-flight scope expansion (Leg 05) note**: Flight 04 was originally scoped at 4 legs. Leg 04's hardware-verification attempt surfaced that Leg 02's DI refactor broke both smoke scripts (`from mcp_sonos.server import mcp, controller` no longer works; `Client(mcp)` against unregistered `mcp` errors). The same flight that introduced the regression closed it as Leg 05. Surface guard wasn't violated — smoke scripts are not in `mcp_sonos/` source, and Leg 02 indirectly broke them. This is the methodology working as intended: scope expansion captured + executed before flight close-out.
 
 ---
 
