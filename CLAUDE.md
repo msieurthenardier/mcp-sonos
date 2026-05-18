@@ -147,3 +147,13 @@ re-synthesize.
   192.168.86.0/24, host 192.168.86.38, 5 Connect:Amp speakers at
   .49/.50/.51/.52/.53). The Windows Firewall rule "WSL-Sonos-Audio"
   is already in place on their machine.
+
+## Flight Operations
+
+This project uses [Flight Control](https://github.com/msieurthenardier/mission-control).
+
+**Before any mission/flight/leg work, read these files in order:**
+1. `.flightops/README.md` — What the flightops directory contains
+2. `.flightops/FLIGHT_OPERATIONS.md` — **The workflow you MUST follow**
+3. `.flightops/ARTIFACTS.md` — Where all artifacts are stored
+4. `.flightops/agent-crews/` — Project crew definitions for each phase (read the relevant crew file)
