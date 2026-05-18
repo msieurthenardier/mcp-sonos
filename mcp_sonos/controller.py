@@ -317,13 +317,9 @@ class SonosController:
 
         s, coord = self._resolve_coordinator(target)
         if volume is not None:
-            members = []
-            try:
-                if coord.group and coord.group.members:
-                    members = list(coord.group.members)
-            except Exception:
-                pass
-            for m in (members or [coord]):
+            member_names = _group_members_of(coord)
+            members = [self._resolve(n) for n in member_names]
+            for m in members:
                 m.volume = volume
         coord.play_uri(url, title=f"Say: {text[:40]}")
         self._wait_until_stopped(coord)
