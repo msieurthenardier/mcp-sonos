@@ -21,7 +21,7 @@ from .speakers import lan_host_ip
 from .tts import synthesize
 
 
-TARGET_IP = "192.168.86.53"  # Kitchen
+TARGET_IP = "192.168.1.53"  # Kitchen
 TARGET_NAME = "Kitchen"
 
 
