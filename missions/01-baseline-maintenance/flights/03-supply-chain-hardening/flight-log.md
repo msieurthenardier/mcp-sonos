@@ -3,7 +3,42 @@
 **Flight**: [Supply-Chain Hardening](flight.md)
 
 ## Summary
-(Filled in during execution.)
+
+Flight landed 2026-05-18. All 3 legs completed and committed (one commit per leg plus a flight-start commit). Reviewer confirmed `[HANDOFF:confirmed]` over cumulative changes with no issues.
+
+| Leg | Scope | Commit | Status |
+|-----|-------|--------|--------|
+| start | flip status + Flight Director Notes | `275e787` | — |
+| 01 | F8 — Piper voice SHA-256 pin + verify-existing + trust-on-first-use | `34ff1ef` | completed |
+| 02 | F13 — fastmcp<4 cap in pyproject.toml | `c65251f` | completed |
+| 03 | F17 — pip-audit dev extra + baseline scan (0 vulnerabilities) | `5047fe5` | completed |
+
+**Pip-audit baseline (seed for future deltas)**:
+- 104 PyPI packages scanned (mcp-sonos local-editable skipped — expected)
+- **0 critical / 0 high / 0 medium / 0 low** — clean baseline
+- Strict-mode rerun confirmed
+- pip-audit version: 2.10.0
+
+**Pinned hash audit trail**:
+- Default voice: `en_US-lessac-medium` → SHA-256 `5efe09e69902187827af646e1a6e9d269dee769f9877d17b16b1b46eeaaf019f`
+- Source of truth: HuggingFace LFS pointer at `https://huggingface.co/rhasspy/piper-voices/raw/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx` (returns `oid sha256:<hash>` + `size 63201294`)
+- Local-vs-upstream comparison: **match** (size also confirms)
+
+**Installed versions at flight-end (baseline for future maintenance cycles)**:
+- `fastmcp==3.3.1` (within new `<4` cap)
+- `soco==0.31.0`
+- `piper-tts==1.4.2`
+- `pydantic==2.13.4`
+- `pip-audit==2.10.0` (dev extra)
+
+**Smoke-test state — unchanged from Flight 02**:
+- `say()` coordinator bug (mission Known Issues) — still pending the maintenance spike
+- SSDP-discovery race (Flight 02 debrief) — still pending Flight 04 prerequisite work
+- This flight's changes do not affect either failure mode
+
+**Mission state after flight**:
+- 13 of 14 success criteria ticked (F1-F6, F8, F10, F11, F12, F13, F14, F17). Remaining: F7 (Flight 04 — test scaffolding).
+- Flights 1, 2, 3 completed; Flight 4 still `ready`. Mission near completion.
 
 ---
 
