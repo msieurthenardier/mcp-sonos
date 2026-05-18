@@ -9,10 +9,8 @@ from __future__ import annotations
 
 import os
 import tempfile
-import threading
 import time
 from pathlib import Path
-from typing import Iterable
 
 from soco import SoCo
 
@@ -95,7 +93,6 @@ class SonosController:
         self.audio.start()
         _mr = os.environ.get("AUDIO_MEDIA_ROOT", "").strip()
         self.media_root: Path | None = Path(_mr).expanduser().resolve() if _mr else None
-        self._lock = threading.Lock()
         self._speakers: list[SoCo] = []
         self._speakers_ts: float = 0.0
         self.playlists = PlaylistManager(resolve_coordinator=self._resolve_coordinator)
