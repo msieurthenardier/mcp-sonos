@@ -99,6 +99,20 @@ Verified each scope item against current code at flight planning time (2026-05-1
   - `.venv/bin/python -m py_compile poc/debug_play.py` → clean.
 - **Notes**: Text-only docs-only change. The maintainer's live config (actual firewall rule, real speaker IPs) is unaffected — only the *documented* example values are anonymized. Historical artifacts under `missions/` retain the original subnet values as evidence of the finding; this is the intended behavior per the leg's "snapshots are preserved" constraint.
 
+### Leg 04 — Fix README tool count (F11)
+
+- **Status**: landed
+- **Started**: 2026-05-18
+- **Completed**: 2026-05-18
+- **Changes Made**:
+  - `README.md:378` — `├── server.py       # FastMCP — 19 tools, stdio transport` → `... — 32 tools, stdio transport`. Line had shifted from the maintenance report's `:369` to `:378` due to Flight 01's README additions; located via grep, not by line number.
+- **Verification**:
+  - `grep -n "19 tools" README.md` → no hits.
+  - `grep -n "32 tools" README.md` → one hit at `:378`.
+  - `grep -c "@mcp.tool" mcp_sonos/server.py` → `32` (matches new claim).
+  - `grep -n "19 tools\|32 tools" README.md CLAUDE.md` → only the corrected README line plus the pre-existing `CLAUDE.md:8` "32 tools" prose; no other stale counts in either file.
+- **Notes**: Single-character documentation fix. The architecture diagram count was the only stale tool-count assertion in README; CLAUDE.md headline already said 32. No future-proofing applied (kept the count rather than dropping it) — the diagram is the only place a casual reader will see the architecture summary, and a stale count is the kind of thing future maintenance flights will catch.
+
 ---
 
 ## Decisions

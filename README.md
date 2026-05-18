@@ -375,7 +375,7 @@ suggest the user power-cycle it or check the Sonos app.
 
 ```
 mcp_sonos/
-├── server.py       # FastMCP — 19 tools, stdio transport
+├── server.py       # FastMCP — 32 tools, stdio transport
 ├── controller.py   # All business logic; MCP-agnostic, unit-testable
 ├── speakers.py     # Discovery (SSDP + SONOS_IPS) + name resolution
 ├── audio_host.py   # Persistent HTTP server hosting TTS / staged files

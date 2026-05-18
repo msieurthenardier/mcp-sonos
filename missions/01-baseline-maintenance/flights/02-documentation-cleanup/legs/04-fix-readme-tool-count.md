@@ -1,6 +1,6 @@
 # Leg: 04-fix-readme-tool-count
 
-**Status**: ready
+**Status**: completed
 **Flight**: [Documentation Cleanup](../flight.md)
 
 ## Objective
@@ -19,9 +19,9 @@ Reconcile the README "Architecture" section's "19 tools" claim with the actual c
 - README architecture diagram says "32 tools" (or drops the count and relies on the table at `:18-23`)
 
 ## Acceptance Criteria
-- [ ] `README.md:369` no longer claims "19 tools"
-- [ ] Either: says "32 tools, stdio transport" (matching headline), or omits the count
-- [ ] No other stale tool counts elsewhere in README/CLAUDE.md (grep audit)
+- [x] `README.md:369` no longer claims "19 tools" (line shifted to `:378` after Flight 01 README additions; "19 tools" gone)
+- [x] Either: says "32 tools, stdio transport" (matching headline), or omits the count
+- [x] No other stale tool counts elsewhere in README/CLAUDE.md (grep audit — only the one site)
 
 ## Verification Steps
 - `grep -n "19 tools\|tools, stdio" README.md` returns no stale `19`.
@@ -45,7 +45,7 @@ Reconcile the README "Architecture" section's "19 tools" claim with the actual c
 
 ## Post-Completion Checklist
 
-- [ ] All acceptance criteria verified
-- [ ] Update `../flight-log.md`
-- [ ] Set this leg's status to `completed`
-- [ ] Check off in `../flight.md`
+- [x] All acceptance criteria verified
+- [x] Update `../flight-log.md`
+- [x] Set this leg's status to `completed`
+- [x] Check off in `../flight.md`
