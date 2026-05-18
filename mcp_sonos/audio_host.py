@@ -13,6 +13,7 @@ import os
 import shutil
 import socket
 import threading
+import urllib.parse
 from pathlib import Path
 
 
@@ -95,7 +96,8 @@ class AudioHost:
         self._thread = None
 
     def url_for(self, filename: str) -> str:
-        return f"http://{self.host_ip}:{self.port}/{filename}"
+        safe = urllib.parse.quote(filename)
+        return f"http://{self.host_ip}:{self.port}/{safe}"
 
     def stage(self, source: Path) -> str:
         """Copy a file into the served root (idempotent) and return its URL.
