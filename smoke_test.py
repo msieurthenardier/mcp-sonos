@@ -19,7 +19,8 @@ os.environ.setdefault("SONOS_IPS", "192.168.1.51,192.168.1.52,192.168.1.53,192.1
 
 from fastmcp import Client
 
-from mcp_sonos.server import mcp
+from mcp_sonos.controller import SonosController
+from mcp_sonos.server import mcp, register_tools
 
 
 def pp(label: str, result) -> None:
@@ -30,6 +31,8 @@ def pp(label: str, result) -> None:
 
 
 async def main() -> None:
+    controller = SonosController()
+    register_tools(mcp, controller)
     async with Client(mcp) as client:
         tools = await client.list_tools()
         print(f"Server exposes {len(tools)} tools:")

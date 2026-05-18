@@ -32,8 +32,12 @@ for noisy in ("soco", "soco.services", "urllib3", "mcp", "FastMCP"):
 
 from fastmcp import Client
 
-from mcp_sonos.server import mcp, controller
+from mcp_sonos.controller import SonosController
+from mcp_sonos.server import mcp, register_tools
 from mcp_sonos.tts import synthesize
+
+controller = SonosController()
+register_tools(mcp, controller)
 
 
 def pp(label: str, result) -> None:

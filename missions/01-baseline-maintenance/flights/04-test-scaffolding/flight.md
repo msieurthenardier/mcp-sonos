@@ -111,6 +111,7 @@ Four legs. Leg 01 is small (smoke + docstring cleanups). Leg 02 is the largest (
 - [x] `02-test-scaffolding-and-di-refactor` — DI refactor (defer module-level `SonosController()` in `server.py`; `register_tools(mcp, controller)` factory) + `SoCoFake` in `tests/_fakes.py` + pytest config in `pyproject.toml` + `pytest` in `[dev]` extras (F7 core architectural backbone)
 - [x] `03-first-unit-tests` — Three pure-function tests using the scaffolding: `tests/test_urls.py` (validate_http_url happy + bad scheme + no netloc), `tests/test_tts_verify.py` (`_verify_or_log` happy + tamper + no-pin warning + `_hash_voice_file`), `tests/test_playlists_takeover.py` (F1 takeover regression via SoCoFake)
 - [x] `04-investigate-say-coordinator-bug` — Reproduce mission Known Issue as a SoCoFake-driven test; instrument `controller.py:_resolve_coordinator` if needed; fix-or-xfail decision per scope
+- [x] `05-fix-smoke-scripts-after-di-refactor` — Scope expansion: Leg 02's DI refactor broke both smoke scripts (they import `mcp`/`controller` directly); restore by constructing controller + calling `register_tools(mcp, controller)` in both scripts. Discovered during Leg 04's smoke verification attempt.
 
 ---
 
