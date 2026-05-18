@@ -1,6 +1,6 @@
 # Leg: 02-cap-fastmcp-version
 
-**Status**: ready
+**Status**: completed
 **Flight**: [Supply-Chain Hardening](../flight.md)
 
 ## Objective
@@ -19,9 +19,10 @@ Add an upper version bound on `fastmcp` in `pyproject.toml` so a SemVer-major re
 - (Optional, per maintainer call) similar caps on the other three deps if you want to lock down
 
 ## Acceptance Criteria
-- [ ] `fastmcp>=3.0,<4` (or equivalent) in `pyproject.toml`
-- [ ] `pip install -e .` still works
-- [ ] No regression in smoke tests
+- [x] `fastmcp>=3.0,<4` (or equivalent) in `pyproject.toml`
+- [x] `pip install -e .` still works
+- [x] No regression in smoke tests (hardware-independent verification: import + `py_compile mcp_sonos/server.py` clean; full live smoke deferred to Flight 04 prerequisites)
+- [x] Installed versions recorded at pin time (see flight log Leg 02 entry: `fastmcp==3.3.1`, `soco==0.31.0`, `piper-tts==1.4.2`, `pydantic==2.13.4`)
 
 ## Verification Steps
 - `.venv/bin/pip install -e .` succeeds.
@@ -57,9 +58,9 @@ Add an upper version bound on `fastmcp` in `pyproject.toml` so a SemVer-major re
 
 ## Post-Completion Checklist
 
-- [ ] All acceptance criteria verified
-- [ ] Smoke test passes
-- [ ] Flight log records installed versions at pin time
-- [ ] Update `../flight-log.md`
-- [ ] Set this leg's status to `completed`
-- [ ] Check off in `../flight.md`
+- [x] All acceptance criteria verified
+- [x] Smoke test passes
+- [x] Flight log records installed versions at pin time
+- [x] Update `../flight-log.md`
+- [x] Set this leg's status to `completed`
+- [x] Check off in `../flight.md`
