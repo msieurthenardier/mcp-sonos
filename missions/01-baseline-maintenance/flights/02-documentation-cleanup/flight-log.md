@@ -69,6 +69,22 @@ Verified each scope item against current code at flight planning time (2026-05-1
   - `python -m py_compile` clean on all three files.
 - **Notes**: Text-only changes. No behavior change. The `lang` Field description shift does alter the MCP tool schema text exposed to agents — that's the documentation-honesty intent of the leg. No smoke test run (documentation-only per Flight Director's pre-flight call).
 
+### Leg 02 — Remove dead lock and import (F6)
+
+- **Status**: landed
+- **Started**: 2026-05-18
+- **Completed**: 2026-05-18
+- **Changes Made**:
+  - `mcp_sonos/controller.py:15` — deleted `from typing import Iterable` (sole symbol on the line; no other `typing` imports).
+  - `mcp_sonos/controller.py:98` — deleted `self._lock = threading.Lock()` (assignment-only; no acquire/release/with sites anywhere in the file).
+  - `mcp_sonos/controller.py:12` — deleted `import threading` (no remaining `threading.` references after the lock assignment was removed).
+- **Verification**:
+  - `.venv/bin/python -m py_compile mcp_sonos/controller.py` → clean.
+  - `grep -n "Iterable\|_lock" mcp_sonos/controller.py` → no hits.
+  - `grep -n "threading" mcp_sonos/controller.py` → no hits.
+  - No smoke test (per Flight Director's pre-flight call; deletions are inert).
+- **Notes**: Pure deletion, ~5 lines removed across the import block and `__init__`. No behavior change — the `_lock` had no usage sites, so removing it cannot have functional impact. The misleading "controller is thread-safe" signal is now gone; if real concurrency becomes a concern, the F7 test-scaffolding work will need to model proper synchronization around `_speakers`/`_speakers_ts` rather than reviving a class-level lock. The class docstring still says "speakers cache + audio host + lock" — left in place per the leg spec's tight scope (Iterable + lock + threading); that docstring drift is a candidate for a future micro-cleanup if anyone trips on it.
+
 ---
 
 ## Decisions

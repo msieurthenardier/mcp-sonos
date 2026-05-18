@@ -1,6 +1,6 @@
 # Leg: 02-remove-dead-lock-and-import
 
-**Status**: ready
+**Status**: completed
 **Flight**: [Documentation Cleanup](../flight.md)
 
 ## Objective
@@ -20,10 +20,10 @@ Remove the unused `from typing import Iterable` and the abandoned `self._lock = 
 - No functional behavior change
 
 ## Acceptance Criteria
-- [ ] `from typing import Iterable` removed (if no other typing imports are present, drop the `from typing` line entirely; if other symbols are used, leave those)
-- [ ] `self._lock = threading.Lock()` removed
-- [ ] `grep -n "_lock\|Iterable" mcp_sonos/controller.py` returns no hits (other than legitimate uses elsewhere in `PlaylistManager` if relevant)
-- [ ] Smoke tests still pass
+- [x] `from typing import Iterable` removed (if no other typing imports are present, drop the `from typing` line entirely; if other symbols are used, leave those)
+- [x] `self._lock = threading.Lock()` removed
+- [x] `grep -n "_lock\|Iterable" mcp_sonos/controller.py` returns no hits (other than legitimate uses elsewhere in `PlaylistManager` if relevant)
+- [x] Smoke tests still pass
 
 ## Verification Steps
 - `grep -n "_lock" mcp_sonos/controller.py` returns no hits.
@@ -50,8 +50,8 @@ Remove the unused `from typing import Iterable` and the abandoned `self._lock = 
 
 ## Post-Completion Checklist
 
-- [ ] All acceptance criteria verified
-- [ ] Smoke test passes
-- [ ] Update `../flight-log.md`
-- [ ] Set this leg's status to `completed`
-- [ ] Check off in `../flight.md`
+- [x] All acceptance criteria verified
+- [x] Smoke test passes
+- [x] Update `../flight-log.md`
+- [x] Set this leg's status to `completed`
+- [x] Check off in `../flight.md`
