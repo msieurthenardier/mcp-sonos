@@ -1,6 +1,6 @@
 # Leg: 05-codify-claude-md-patterns
 
-**Status**: ready
+**Status**: completed
 **Flight**: [Documentation Cleanup](../flight.md)
 
 ## Objective
@@ -26,10 +26,10 @@ Append two emergent-from-Flight-01 patterns to the `## When extending` section o
 - `CLAUDE.md`'s `## When extending` section includes two new entries (bullets or sub-sections) describing the patterns
 
 ## Acceptance Criteria
-- [ ] `CLAUDE.md` `## When extending` section contains a bullet (or sub-section) describing the `_urls.py` defence-in-depth pattern — "single validator module imported at every enforcement surface (tool, controller, manager); validators that gate cross-cutting input policy go in a small `_<topic>.py` module"
-- [ ] The same section extends or adds a bullet describing the eager-parse/lazy-validate convention — "for env vars whose value can be invalid (paths, ports), parse eagerly at `SonosController.__init__` storing a typed attribute, validate lazily at the first call that uses it; rationale: invalid config doesn't crash the MCP server's startup, the tool returns a clear error instead"
-- [ ] References to `_urls.py` (and `validate_http_url`) and `AUDIO_MEDIA_ROOT` (as the reference implementation of the lazy-validate pattern) appear with file paths so future contributors can follow the link
-- [ ] No other CLAUDE.md sections modified (Leg 03 owns the LAN-IP anonymization in `## Important context`)
+- [x] `CLAUDE.md` `## When extending` section contains a bullet (or sub-section) describing the `_urls.py` defence-in-depth pattern — "single validator module imported at every enforcement surface (tool, controller, manager); validators that gate cross-cutting input policy go in a small `_<topic>.py` module"
+- [x] The same section extends or adds a bullet describing the eager-parse/lazy-validate convention — "for env vars whose value can be invalid (paths, ports), parse eagerly at `SonosController.__init__` storing a typed attribute, validate lazily at the first call that uses it; rationale: invalid config doesn't crash the MCP server's startup, the tool returns a clear error instead"
+- [x] References to `_urls.py` (and `validate_http_url`) and `AUDIO_MEDIA_ROOT` (as the reference implementation of the lazy-validate pattern) appear with file paths so future contributors can follow the link
+- [x] No other CLAUDE.md sections modified (Leg 03 owns the LAN-IP anonymization in `## Important context`)
 
 ## Verification Steps
 - `grep -n "_urls.py\|defence-in-depth\|defense-in-depth" CLAUDE.md` — at least one hit, inside `## When extending`.
@@ -80,8 +80,8 @@ Append two emergent-from-Flight-01 patterns to the `## When extending` section o
 
 ## Post-Completion Checklist
 
-- [ ] All acceptance criteria verified
-- [ ] Visual diff confined to `## When extending`
-- [ ] Update `../flight-log.md` with leg progress entry
-- [ ] Set this leg's status to `completed`
-- [ ] Check off this leg in `../flight.md`
+- [x] All acceptance criteria verified
+- [x] Visual diff confined to `## When extending`
+- [x] Update `../flight-log.md` with leg progress entry
+- [x] Set this leg's status to `completed`
+- [x] Check off this leg in `../flight.md`
