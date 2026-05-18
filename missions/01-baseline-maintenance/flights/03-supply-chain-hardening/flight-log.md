@@ -58,6 +58,13 @@ Verified each scope item against current code at flight planning time (2026-05-1
   4. Trust-on-first-use (simulated by clearing `KNOWN_VOICE_HASHES` temporarily — avoids ~60 MB download of a second voice) — `WARNING` log emitted with observed hash and "Add to KNOWN_VOICE_HASHES to pin." guidance.
 - Leg status: `ready` → `landed`. Not committed (handoff to reviewer per `/agentic-workflow` Phase 2d).
 
+**2026-05-18 — Leg 02 (`02-cap-fastmcp-version`) landed**
+
+- One-line edit to `pyproject.toml`: `"fastmcp>=3.0"` → `"fastmcp>=3.0,<4"`. Other deps (`soco>=0.30`, `piper-tts>=1.3`, `pydantic>=2.0`) intentionally left unbounded per flight design.
+- Installed versions at pin time (delta baseline for next maintenance cycle): `fastmcp==3.3.1`, `soco==0.31.0`, `piper-tts==1.4.2`, `pydantic==2.13.4`. Resolver no-op as predicted — installed `fastmcp` sits within the new cap.
+- Verification (all hardware-independent): `.venv/bin/pip install -e .` succeeded; `pip show fastmcp` confirmed `3.3.1`; `python -c "import fastmcp"` reported `3.3.1`; `py_compile mcp_sonos/server.py` clean (server is the FastMCP consumer).
+- Leg status: `ready` → `in-flight` → `landed`. Not committed (handoff to reviewer per `/agentic-workflow` Phase 2d).
+
 ---
 
 ## Decisions
