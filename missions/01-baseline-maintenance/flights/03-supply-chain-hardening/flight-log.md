@@ -65,6 +65,19 @@ Verified each scope item against current code at flight planning time (2026-05-1
 - Verification (all hardware-independent): `.venv/bin/pip install -e .` succeeded; `pip show fastmcp` confirmed `3.3.1`; `python -c "import fastmcp"` reported `3.3.1`; `py_compile mcp_sonos/server.py` clean (server is the FastMCP consumer).
 - Leg status: `ready` → `in-flight` → `landed`. Not committed (handoff to reviewer per `/agentic-workflow` Phase 2d).
 
+**2026-05-18 — Leg 03 (`03-run-pip-audit-baseline`) landed**
+
+- Added `[project.optional-dependencies] dev = ["pip-audit"]` to `pyproject.toml` (placed between `[project]` and `[project.scripts]`). Scoped to pip-audit only — pytest deferred to Flight 04 per leg ACs.
+- `.venv/bin/pip install -e ".[dev]"` succeeded; installed `pip-audit==2.10.0` plus 16 transitive deps (CacheControl, cyclonedx-python-lib, defusedxml, filelock, msgpack, packageurl-python, pip-api, pip-requirements-parser, py-serializable, sortedcontainers, tomli, tomli-w, pyparsing, license-expression, boolean.py — all dev-tool-only, isolated to the `[dev]` extra).
+- `pip-audit --version`: `pip-audit 2.10.0`. Total packages audited: 105 (from `pip freeze | wc -l`); minus the local editable `mcp-sonos` = 104 PyPI packages scanned against OSV.
+- **Baseline scan result** (captured in ephemeral output `/tmp/pip-audit-output.txt`; summary below):
+  - **Severity counts**: 0 critical, 0 high, 0 medium, 0 low — **no known vulnerabilities found** across the full dependency closure (direct + transitive, runtime + dev).
+  - **Top 3 findings**: N/A — nothing to triage.
+  - **Skips**: `mcp-sonos==0.1.0` skipped (local editable, not on PyPI — expected and benign).
+- `pip-audit --strict` re-run for tighter posture: same result (no vulnerabilities); the local-package skip logs as an ERROR under strict but exit code is still 0 since no actual CVEs were found.
+- **Triage convention applied**: vacuous — zero findings means no critical/high divert, no medium follow-up, no low count to record beyond "0 across the board." Baseline established; next maintenance cycle compares delta against this 0/0/0/0 floor.
+- Leg status: `ready` → `in-flight` → `landed`. Not committed (handoff to reviewer per `/agentic-workflow` Phase 2d).
+
 ---
 
 ## Decisions

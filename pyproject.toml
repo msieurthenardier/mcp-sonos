@@ -29,6 +29,11 @@ dependencies = [
     "pydantic>=2.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pip-audit",
+]
+
 [project.scripts]
 mcp-sonos = "mcp_sonos.server:main"
 

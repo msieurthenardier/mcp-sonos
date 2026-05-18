@@ -6,7 +6,7 @@
 ## Contributing to Criteria
 - [x] F8 — Default Piper voice has a pinned SHA-256 verified on download
 - [x] F13 — `pyproject.toml` caps `fastmcp` at `<4`
-- [ ] F17 — `pip-audit` baseline scan completed; pip-audit in dev extras
+- [x] F17 — `pip-audit` baseline scan completed; pip-audit in dev extras
 
 ---
 
@@ -75,7 +75,7 @@ Three legs, ordered F8 → F13 → F17. F8 touches `tts.py`; F13 touches `pyproj
 
 - [x] `01-pin-piper-voice-hash` — F8: SHA-256 pin for default voice + trust-on-first-use warning for others
 - [x] `02-cap-fastmcp-version` — F13: `>=3.0,<4` in pyproject.toml
-- [ ] `03-run-pip-audit-baseline` — F17: install pip-audit, run baseline scan, capture findings
+- [x] `03-run-pip-audit-baseline` — F17: install pip-audit, run baseline scan, capture findings
 
 ---
 
