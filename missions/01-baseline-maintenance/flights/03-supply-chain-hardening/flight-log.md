@@ -46,11 +46,28 @@ Verified each scope item against current code at flight planning time (2026-05-1
 
 ## Leg Progress
 
-(Append entries here as legs land.)
+**2026-05-18 — Leg 01 (`01-pin-piper-voice-hash`) landed**
+
+- Implemented per the leg's prescriptive Implementation Guidance: added `KNOWN_VOICE_HASHES` module-level dict in `mcp_sonos/tts.py`, `_hash_voice_file` helper (sha256 in 64 KB chunks), `_verify_or_log` helper handling both the no-pin (warning) and mismatch (quarantine + raise) branches, `_verified_voices: set[str]` per-process cache, `_download` extended with `voice_name: str | None` parameter, `_ensure_voice` keeps its `(voice: str) -> Path` signature and gained the verify-existing path.
+- Added `log = logging.getLogger("mcp_sonos.tts")` (module had no logger before); matches the `mcp_sonos.<module>` convention used in `playlists.py`.
+- README updated with a one-liner in the Configuration section noting hash-pinning + trust-on-first-use.
+- Verification (all hardware-independent):
+  1. `py_compile mcp_sonos/tts.py` — clean.
+  2. Happy path on cached pinned voice — succeeds; per-process cache populated; 2nd call skips re-hash.
+  3. Tamper test (`dd` flipped one byte at offset 1024) — raised `RuntimeError` with full expected/observed hash prefixes and full quarantine path; file renamed to `<voice>.onnx.suspect`. Restored from backup after.
+  4. Trust-on-first-use (simulated by clearing `KNOWN_VOICE_HASHES` temporarily — avoids ~60 MB download of a second voice) — `WARNING` log emitted with observed hash and "Add to KNOWN_VOICE_HASHES to pin." guidance.
+- Leg status: `ready` → `landed`. Not committed (handoff to reviewer per `/agentic-workflow` Phase 2d).
 
 ---
 
 ## Decisions
+
+**2026-05-18 — Pinned SHA-256 for `en_US-lessac-medium`** (Leg 01)
+
+- **Pinned value**: `5efe09e69902187827af646e1a6e9d269dee769f9877d17b16b1b46eeaaf019f`
+- **Source of truth**: HuggingFace LFS pointer at `https://huggingface.co/rhasspy/piper-voices/raw/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx` (the `raw/main/` URL returns the small LFS pointer file containing `oid sha256:<hash>` and `size <N>` per git-lfs spec v1).
+- **Local-vs-upstream comparison**: **match**. Local `~/.cache/mcp-sonos/voices/en_US-lessac-medium.onnx` (size 63201294 bytes, downloaded 2026-05-17) hashed to the same value as the upstream LFS pointer's `oid sha256:`. Size also matches the LFS pointer's declared `size 63201294`. No divergence to resolve.
+- **Audit trail**: the pin in `KNOWN_VOICE_HASHES` is annotated with the source URL pattern in a comment above the dict.
 
 ---
 

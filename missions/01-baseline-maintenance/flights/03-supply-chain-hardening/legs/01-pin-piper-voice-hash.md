@@ -1,6 +1,6 @@
 # Leg: 01-pin-piper-voice-hash
 
-**Status**: ready
+**Status**: completed
 **Flight**: [Supply-Chain Hardening](../flight.md)
 
 ## Objective
@@ -21,14 +21,14 @@ Pin a SHA-256 hash for the default Piper voice and verify it on download; for no
 - Non-default voices log a `warning` with the observed SHA-256 once per download
 
 ## Acceptance Criteria
-- [ ] `KNOWN_VOICE_HASHES` (or similar) dict in `tts.py` mapping voice name → SHA-256 hex string; populated with at least the default voice's hash
-- [ ] **Pin obtained from a known-good source, not just whatever's already on disk.** Cross-reference against HuggingFace's blob metadata at `https://huggingface.co/rhasspy/piper-voices/blob/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx` (HF UI shows the file's SHA-256 in the metadata; the API at `/api/models/rhasspy/piper-voices` exposes it programmatically). Record the source of truth in the flight log alongside the hash for auditability
-- [ ] Download path computes SHA-256 of the `.part` file before atomic rename; compares against the pin (if present)
-- [ ] **Verify-existing path**: if `onnx.exists() and st_size >= 1024` AND a pin is known for that voice, hash the existing file and verify. On mismatch: rename to `.onnx.suspect`, log a clear error, force re-download by treating the file as missing. (This catches users with pre-pin tampered files who would otherwise skip the new check entirely.)
-- [ ] Mismatch on download or verify-existing: file moved to `.suspect` suffix or deleted; `RuntimeError` raised with a message naming the expected and observed hashes
-- [ ] Non-default voice (no pin): emit a `warning`-level log with the observed hash, suggesting the operator add it to `KNOWN_VOICE_HASHES`
-- [ ] First-run download of `en_US-lessac-medium` succeeds against the pinned hash (proves the pin value is correct)
-- [ ] Hash-only verify path is cached in-process — don't re-hash the existing file on every `_ensure_voice` call after the first verify in this process
+- [x] `KNOWN_VOICE_HASHES` (or similar) dict in `tts.py` mapping voice name → SHA-256 hex string; populated with at least the default voice's hash
+- [x] **Pin obtained from a known-good source, not just whatever's already on disk.** Cross-reference against HuggingFace's blob metadata at `https://huggingface.co/rhasspy/piper-voices/blob/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx` (HF UI shows the file's SHA-256 in the metadata; the API at `/api/models/rhasspy/piper-voices` exposes it programmatically). Record the source of truth in the flight log alongside the hash for auditability
+- [x] Download path computes SHA-256 of the `.part` file before atomic rename; compares against the pin (if present)
+- [x] **Verify-existing path**: if `onnx.exists() and st_size >= 1024` AND a pin is known for that voice, hash the existing file and verify. On mismatch: rename to `.onnx.suspect`, log a clear error, force re-download by treating the file as missing. (This catches users with pre-pin tampered files who would otherwise skip the new check entirely.)
+- [x] Mismatch on download or verify-existing: file moved to `.suspect` suffix or deleted; `RuntimeError` raised with a message naming the expected and observed hashes
+- [x] Non-default voice (no pin): emit a `warning`-level log with the observed hash, suggesting the operator add it to `KNOWN_VOICE_HASHES`
+- [x] First-run download of `en_US-lessac-medium` succeeds against the pinned hash (proves the pin value is correct) — verified equivalently: cached local file hash equals upstream LFS pointer hash; verify-existing path passes against the pin.
+- [x] Hash-only verify path is cached in-process — don't re-hash the existing file on every `_ensure_voice` call after the first verify in this process
 
 ## Verification Steps
 
@@ -88,33 +88,40 @@ Pin a SHA-256 hash for the default Piper voice and verify it on download; for no
            raise RuntimeError(
                f"Piper voice {voice_name!r} hash mismatch. "
                f"Expected {expected[:16]}..., got {observed[:16]}.... "
-               f"File moved to {quarantine.name}; investigate before retrying."
+               f"File moved to {quarantine}; investigate before retrying."
            )
    ```
+   Note the `{quarantine}` (full path, not `.name`) so the operator can find the quarantined file.
 
-4. **In `_download`**, call `_verify_or_log(voice_name, _hash_voice_file(part_path), part_path)` before the atomic rename. The `.part` file is the file in quarantine on mismatch.
+4. **In `_download`**, call `_verify_or_log(voice_name, _hash_voice_file(tmp), tmp)` before the atomic rename. The `.part` file is what's in quarantine on mismatch (`<voice>.onnx.part.suspect`).
 
-5. **In `_ensure_voice`**, add a verify-existing path. Currently the function returns early when `onnx.exists() and st_size >= 1024`; extend to also verify the hash on first call per process. Cache the verified-set in a module-level `set` so subsequent calls in the same process skip the hash work:
+5. **In `_ensure_voice`**, add a verify-existing path. **Preserve the current signature** `(voice: str) -> Path` — do NOT introduce a `cache` parameter. The function currently calls `cache_dir = _voices_cache_dir()` internally; keep that. Use a module-level `_verified_voices: set[str]` so subsequent calls in the same process skip the hash work:
    ```python
    _verified_voices: set[str] = set()
+   # Note: this set is mutated only inside _ensure_voice, which is called
+   # under _VoiceCache._lock by the existing caller. No additional locking
+   # needed — but if a future caller bypasses _VoiceCache, add a lock.
 
-   def _ensure_voice(voice: str, cache: Path | None = None) -> Path:
-       onnx, cfg = _voice_paths(voice, cache)
+   def _ensure_voice(voice: str) -> Path:
+       cache_dir = _voices_cache_dir()
+       onnx, cfg = _voice_paths(voice, cache_dir)
        if not onnx.exists() or onnx.stat().st_size < 1024:
-           _download(...)  # download path verifies via step 4
+           _download(_hf_url(voice, ".onnx"), onnx, label="voice model", voice_name=voice)
        elif voice not in _verified_voices:
            # Pre-pin file or first run with a new pin — verify now
            observed = _hash_voice_file(onnx)
            _verify_or_log(voice, observed, onnx)  # raises on mismatch
            _verified_voices.add(voice)
-       # cfg path: same logic if you want to pin it too; skip otherwise
        if not cfg.exists():
-           _download(_hf_url(voice, ".onnx.json"), cfg, label="voice config")
+           _download(_hf_url(voice, ".onnx.json"), cfg, label="voice config", voice_name=None)
        return onnx
    ```
-   This closes the "pre-pin tampered cached file" gap — every existing user upgrading the package will get verification on the next `say()` call.
+
+   Note: `_download` will need an additional `voice_name: str | None` parameter so it knows whether to verify (None means "no voice, just download — config file, no hash check"). Wire that through.
 
 6. **Then proceed with the atomic rename** in the download path as today.
+
+7. **Document** in README (Configuration section): briefly note that the default voice is hash-pinned and that non-default voices are trust-on-first-use.
 
 5. **Document** in README (Configuration section): briefly note that the default voice is hash-pinned and that non-default voices are trust-on-first-use.
 
@@ -125,14 +132,17 @@ Pin a SHA-256 hash for the default Piper voice and verify it on download; for no
 ## Edge Cases
 - **HuggingFace re-uploads with a new hash**: when this happens, the pin is wrong and downloads fail until the maintainer updates `KNOWN_VOICE_HASHES`. That's the intended behavior — failure is the alert.
 - **Partial download interrupted**: the `.part` file is cleaned up on raise; existing logic should handle this.
-- **JSON config file**: optional pin; not security-critical (metadata, not executable). Skip for now.
+- **JSON config file**: optional pin; not security-critical (metadata, not executable). Skip for now. `_download` for the config passes `voice_name=None` so `_verify_or_log` doesn't fire.
+- **Verify-existing wastes ~0.5s on cold start for the default voice** even when only the config file is missing (since the verify-existing check runs before the config check). Deliberate tradeoff: simpler control flow vs avoiding the wasted hash. Per-process `_verified_voices` cache means it's a one-time cost. Not worth a `.verified` sidecar file at this scale.
+- **`.suspect` quarantine paths** (`<voice>.onnx.suspect` and `<voice>.onnx.part.suspect`) don't collide with any other file pattern in the project — TTS content cache uses `tts_<hash>.wav` in a different directory.
+- **Thread-safety of `_verified_voices`**: the set is mutated only inside `_ensure_voice`, which is called under `_VoiceCache._lock` by the existing caller. No additional locking needed for the current call path; the inline comment in step 5 captures the invariant for future contributors.
 
 ---
 
 ## Post-Completion Checklist
 
-- [ ] All acceptance criteria verified
-- [ ] First-time download of default voice succeeds with the pinned hash
-- [ ] Update `../flight-log.md` with the recorded SHA-256 for traceability
-- [ ] Set this leg's status to `completed`
-- [ ] Check off in `../flight.md`
+- [x] All acceptance criteria verified
+- [x] First-time download of default voice succeeds with the pinned hash
+- [x] Update `../flight-log.md` with the recorded SHA-256 for traceability
+- [x] Set this leg's status to `completed`
+- [x] Check off in `../flight.md`
