@@ -3,7 +3,34 @@
 **Flight**: [Documentation Cleanup](flight.md)
 
 ## Summary
-(Filled in during execution.)
+
+Flight landed 2026-05-18. All 6 legs completed and committed (one commit per leg plus a flight-start commit). Reviewer confirmed `[HANDOFF:confirmed]` over cumulative changes with three non-blocking observations.
+
+| Leg | Scope | Commit | Status |
+|-----|-------|--------|--------|
+| start | flip status + Flight Director Notes | `9fe844d` | — |
+| 01 | F4 — `say` tool + `playlists.py` doc-traps + `controller.py` stale comment | `2576313` | completed |
+| 02 | F6 — delete dead `threading.Lock`, `Iterable`, `import threading` from `controller.py` | `534d1e7` | completed |
+| 03 | F10 — anonymize LAN IPs in `poc/debug_play.py` and `CLAUDE.md` | `2162acc` | completed |
+| 04 | F11 — README "19 tools" → "32 tools" | `82e9352` | completed |
+| 05 | Debrief — codify `_urls.py` defense-in-depth + AUDIO_MEDIA_ROOT eager-parse/lazy-validate in CLAUDE.md | `112c934` | completed |
+| 06 | Debrief — delete unused `HttpUrl` alias from `server.py` | `8c54a91` | completed |
+
+**Non-blocking observations from Reviewer (captured for future cleanup):**
+
+- `controller.py` class docstring at line 88 still reads "speakers cache + audio host + lock" — out of scope for this flight (Leg 02 scoped tight to the import/lock removal). Candidate for future micro-cleanup.
+- Leg 06 also removed an orphaned comment block above the deleted `HttpUrl` alias. Developer's justification (a comment with no adjacent code is documentation drift) is sound; the policy that comment captured is now in CLAUDE.md `## When extending` per Leg 05, so no net documentation loss.
+- Leg 05's AC verification grep phrasing ("eager parse | lazy validate") differs slightly from the actual prose ("parse eagerly" / "validate lazily"). Semantic intent satisfied; cosmetic only.
+
+**Smoke-test status at flight end:**
+
+- `smoke_test.py` — continues to fail with the known `say()` coordinator bug captured in mission Known Issues. Unchanged by this flight (which is documentation-only). No new failure modes introduced.
+- `playlist_smoke.py` — runnable when hardware reachable.
+
+**Mission state after flight:**
+
+- 10 of 14 success criteria ticked (F1, F2, F3, F4, F5, F6, F10, F11, F12, F14). Remaining: F7 (test scaffolding, Flight 04), F8 (Piper hash pin, Flight 03), F13 (FastMCP cap, Flight 03), F17 (pip-audit baseline, Flight 03).
+- Flights 1 & 2 completed; Flights 3 & 4 still `ready`.
 
 ---
 

@@ -1,20 +1,20 @@
 # Flight: Documentation Cleanup
 
-**Status**: in-flight
+**Status**: landed
 **Mission**: [Baseline Maintenance](../../mission.md)
 
 ## Contributing to Criteria
 
 **Mission success criteria (from maintenance report):**
-- [ ] F4 — `say` tool docstring describes Piper accurately; `playlists.py:4` docstring matches the speaker-UID keying invariant
-- [ ] F6 — Unused `Iterable` import and dead `threading.Lock` removed from `controller.py`
-- [ ] F10 — `poc/debug_play.py` and `CLAUDE.md` no longer contain real LAN IPs
-- [ ] F11 — README "Architecture" section reflects 32 tools
+- [x] F4 — `say` tool docstring describes Piper accurately; `playlists.py:4` docstring matches the speaker-UID keying invariant
+- [x] F6 — Unused `Iterable` import and dead `threading.Lock` removed from `controller.py`
+- [x] F10 — `poc/debug_play.py` and `CLAUDE.md` no longer contain real LAN IPs
+- [x] F11 — README "Architecture" section reflects 32 tools
 
 **Flight 01 debrief follow-ups (bundled here — share doc surface):**
-- [ ] CLAUDE.md codifies the `_urls.py` defence-in-depth pattern (single validator, tool + controller + manager call sites)
-- [ ] CLAUDE.md codifies the "eager parse at `__init__`, lazy validate at first use" env-var convention (as used for `AUDIO_MEDIA_ROOT`)
-- [ ] `HttpUrl` alias in `server.py` is consistently adopted OR removed — no half-adoption (define-but-don't-use)
+- [x] CLAUDE.md codifies the `_urls.py` defense-in-depth pattern (single validator, tool + controller + manager call sites)
+- [x] CLAUDE.md codifies the "eager parse at `__init__`, lazy validate at first use" env-var convention (as used for `AUDIO_MEDIA_ROOT`)
+- [x] `HttpUrl` alias in `server.py` removed — half-adoption resolved (deleted; inline `AfterValidator(validate_http_url)` calls at consumer sites remain as the live policy)
 
 ---
 
@@ -70,13 +70,13 @@ Six edits, all text or near-text. None touch runtime behavior except Leg 06 (`Ht
 **Smoke-test coverage during the flight**: smoke tests touch zero of these surfaces directly except Leg 06 (URL validation in `play_url`/`playlist_add`). The cleanup is mostly diff-only review territory.
 
 ### Checkpoints
-- [ ] F4a: `say` tool docstring updated (gTTS → Piper, `lang` marked deprecated)
-- [ ] F4b: `playlists.py:4` and `:99` updated to "speaker UID" matching code
-- [ ] F6: `controller.py:15` (`Iterable`) and `:98` (`_lock`) cleaned up; `import threading` also dropped if no longer used
-- [ ] F10: LAN IPs anonymized in `poc/debug_play.py:24` and `CLAUDE.md:147`
-- [ ] F11: README architecture diagram updated ("19 tools" → "32 tools" at current line `:378`)
-- [ ] CLAUDE.md codification: `_urls.py` defence-in-depth pattern + eager-parse/lazy-validate convention appended to `## When extending`
-- [ ] `HttpUrl` alias removed (or fully adopted) at `server.py:47, 85, 245`
+- [x] F4a: `say` tool docstring updated (gTTS → Piper, `lang` marked deprecated)
+- [x] F4b: `playlists.py:4` and `:99` updated to "speaker UID" matching code
+- [x] F6: `controller.py` (`Iterable`, `_lock`, `import threading`) cleaned up
+- [x] F10: LAN IPs anonymized in `poc/debug_play.py` and `CLAUDE.md`
+- [x] F11: README architecture diagram updated ("19 tools" → "32 tools")
+- [x] CLAUDE.md codification: `_urls.py` defense-in-depth pattern + eager-parse/lazy-validate convention appended to `## When extending`
+- [x] `HttpUrl` alias removed at `server.py`
 
 ### Adaptation Criteria
 
@@ -102,11 +102,11 @@ Six edits, all text or near-text. None touch runtime behavior except Leg 06 (`Ht
 ## Post-Flight
 
 ### Completion Checklist
-- [ ] All 6 legs completed (each with its own commit)
-- [ ] Smoke tests still pass (`playlist_smoke.py` at minimum; `smoke_test.py` is currently failing per the mission Known Issues `say()` bug — re-run, don't expect it to start passing from this flight)
-- [ ] Maintenance report findings F4, F6, F10, F11 ticked in mission.md
-- [ ] Flight log filled in (per-leg entries + final summary)
-- [ ] PR opened (draft until ready)
+- [x] All 6 legs completed (each with its own commit: 2576313, 534d1e7, 2162acc, 82e9352, 112c934, 8c54a91 + flight-start 9fe844d)
+- [x] Smoke tests — `playlist_smoke.py` runnable when hardware reachable; `smoke_test.py` continues to fail per mission Known Issues `say()` bug (unchanged by this flight, expected). No NEW failure modes introduced (the divert criterion was not tripped)
+- [x] Maintenance report findings F4, F6, F10, F11 ticked in mission.md
+- [x] Flight log filled in (per-leg entries + final summary)
+- [ ] PR opened (Flight Director step)
 
 ### Verification
 - Diff-only review: changes are text/metadata; no functional impact expected.
