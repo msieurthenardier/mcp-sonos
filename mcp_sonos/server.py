@@ -40,13 +40,6 @@ SpeakerName = Annotated[
 ]
 
 
-# Scheme allow-list applied to every URL the agent can hand to the speaker.
-# Rejects `file://`, `gopher://`, custom Sonos-internal schemes, etc., before
-# they reach SoCo, so the MCP response carries a clean validation error
-# instead of a UPnP "Illegal MIME-Type" surprise.
-HttpUrl = Annotated[str, AfterValidator(validate_http_url)]
-
-
 # ---- queries ----------------------------------------------------------------
 
 
