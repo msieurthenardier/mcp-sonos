@@ -19,12 +19,25 @@ from pathlib import Path
 PORT_RANGE = (8000, 8999)
 
 
+def _validate_port(p: int) -> int:
+    if not (PORT_RANGE[0] <= p <= PORT_RANGE[1]):
+        raise ValueError(
+            f"AUDIO_PORT={p} is outside the {PORT_RANGE[0]}-{PORT_RANGE[1]} "
+            f"range. The default Windows Firewall / iptables rule scopes "
+            f"inbound traffic to this range; out-of-range ports will be "
+            f"silently dropped by the firewall, with speakers transitioning "
+            f"then stopping. Set AUDIO_PORT within {PORT_RANGE[0]}-{PORT_RANGE[1]} "
+            f"or update the firewall rule."
+        )
+    return p
+
+
 def _pick_port(preferred: int | None = None) -> int:
     if preferred is not None:
-        return preferred
+        return _validate_port(preferred)
     env = os.environ.get("AUDIO_PORT", "").strip()
     if env:
-        return int(env)
+        return _validate_port(int(env))
     lo, hi = PORT_RANGE
     # Walk linearly; pick the first free. Deterministic is nicer for
     # logs than random.
