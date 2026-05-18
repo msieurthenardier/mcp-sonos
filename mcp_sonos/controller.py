@@ -17,6 +17,7 @@ from typing import Iterable
 from soco import SoCo
 
 from . import speakers as sp
+from ._urls import validate_http_url
 from .audio_host import AudioHost
 from .playlists import PlaylistManager
 from .tts import synthesize
@@ -157,6 +158,9 @@ class SonosController:
 
     def play_url(self, name: str, url: str, title: str | None = None) -> dict:
         """Play any HTTP URL on the speaker's group coordinator."""
+        # Defence in depth: the MCP tool surface already validates, but
+        # direct/test callers reach this method without that gate.
+        validate_http_url(url)
         s, coord = self._resolve_coordinator(name)
         coord.play_uri(url, title=title or "MCP playback")
         return {

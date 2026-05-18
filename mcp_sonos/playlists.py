@@ -21,6 +21,8 @@ from typing import Callable, Optional
 
 from soco import SoCo
 
+from ._urls import validate_http_url
+
 
 log = logging.getLogger("mcp_sonos.playlists")
 
@@ -133,6 +135,10 @@ class PlaylistManager:
         url = url.strip()
         if not url:
             raise PlaylistError("url is empty")
+        try:
+            validate_http_url(url)
+        except ValueError as e:
+            raise PlaylistError(str(e))
         with self._lock:
             pl.items.append(PlaylistItem(url=url, title=title))
             return pl
@@ -147,6 +153,10 @@ class PlaylistManager:
             url = str(raw["url"]).strip()
             if not url:
                 raise PlaylistError(f"items[{i}] has empty url")
+            try:
+                validate_http_url(url)
+            except ValueError as e:
+                raise PlaylistError(f"items[{i}]: {e}")
             normalized.append(PlaylistItem(url=url, title=raw.get("title")))
         with self._lock:
             pl.items.extend(normalized)

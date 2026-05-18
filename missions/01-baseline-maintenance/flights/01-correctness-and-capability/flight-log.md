@@ -113,6 +113,64 @@ Verified each finding against current code at flight planning time (2026-05-18, 
 - Live-hardware smoke tests not re-run: F3 is a startup-time validation on a single env-read path. Behavior change is limited to "raises early instead of failing silently mid-playback" for out-of-range values; in-range values traverse identical code to before. No state-machine, playback, or HTTP-handler surface touched.
 - Non-integer `AUDIO_PORT` (e.g. `"abc"`) continues to fail via `int(env)` `ValueError` before `_validate_port` runs — left as-is per leg's "Edge Cases" guidance.
 
+### Leg 05 — F12 URL-encode audio host filenames
+**Status**: landed
+**Started**: 2026-05-18T13:55:00Z
+**Completed**: 2026-05-18T13:57:00Z
+
+#### Changes Made
+- `mcp_sonos/audio_host.py`: added `import urllib.parse` to module imports.
+- `mcp_sonos/audio_host.py`: in `url_for`, route `filename` through `urllib.parse.quote(filename)` (bound to local `safe`) before f-string interpolation. Default `quote` safe set (`/`) is fine here — `stage()` always passes `target.name` (a basename), and TTS WAV filenames are sha1-hex.
+
+#### Verification
+- `.venv/bin/python -m py_compile mcp_sonos/audio_host.py` — clean.
+- Inline check: `AudioHost(root=Path('/tmp'), host_ip='1.2.3.4', port=8000).url_for('My Song.mp3')` → `http://1.2.3.4:8000/My%20Song.mp3` (exact match).
+- Inline check: same instance, `url_for('simple.mp3')` → `http://1.2.3.4:8000/simple.mp3` (unchanged, no encoding noise).
+- `stage()` was already routing through `url_for` — no inline URL construction elsewhere in the module. Implementation guidance item 3 confirmed by reading.
+
+#### Notes
+- Smoke test (`smoke_test.py`) ran against live hardware: discovery succeeded (Dining Room, Fireplace Room, Kitchen, Lounge, Patio). The `say` call then failed with `play_uri can only be called/used on the coordinator in a group` — this is **unrelated** to Leg 05. `say` generates a sha1-hex TTS filename, which is URL-safe and unchanged in shape by the `quote` call. The failure is a pre-existing group-coordinator semantics issue in the `say` path, surfaced today (possibly because the smoke-test target speaker has been grouped under a different coordinator on the network since Leg 04's run). Flagged as anomaly below; will not be addressed in this leg per its narrow scope.
+- `play_file` against a space-containing filename was NOT exercised end-to-end against hardware in this leg — no staged file under `AUDIO_MEDIA_ROOT` available and no live target. URL string is correctness-verified; "Sonos accepts the encoded URL" portion of AC #3 carried to flight-level Post-Flight, consistent with prior legs' approach to live-hardware risk surfaces.
+
+### Leg 06 — F14 restrict play_url schemes to http/https
+**Status**: landed
+**Started**: 2026-05-18T14:00:00Z
+**Completed**: 2026-05-18T14:05:00Z
+
+#### Changes Made
+- New module `mcp_sonos/_urls.py`: `validate_http_url(u: str) -> str`. Lowercases the parsed scheme, requires it to be in `{"http", "https"}`, also requires a non-empty `netloc`. Single source of truth reused at all three sites (tool, controller, playlist).
+- `mcp_sonos/server.py`:
+  - Imports `AfterValidator` from `pydantic` and `validate_http_url` from `._urls`.
+  - Adds module-level `HttpUrl = Annotated[str, AfterValidator(validate_http_url)]` (currently unused as a type alias by the tools — they spell out the `Annotated[...]` inline to preserve their `Field(description=...)`, but the alias is kept as the canonical reusable form per leg guidance).
+  - `play_url` and `playlist_add` `url` parameters now go through `AfterValidator(validate_http_url)` alongside their existing `Field(description=...)`.
+  - `playlist_add_many`: adds an in-body validation loop that scheme-checks every dict-shaped item carrying a `url`, raising `ValueError("items[{i}]: …")` on the first offender. Dict-shape enforcement stays loose because `PlaylistManager.add_many` already enforces it with the same idiom (per leg guidance — avoids a controller-signature change for a defence-in-depth fix).
+- `mcp_sonos/controller.py`: imports `validate_http_url`; calls it as the first statement inside `play_url` (before `_resolve_coordinator`), so direct/test callers of the controller surface get the same gate.
+- `mcp_sonos/playlists.py`: imports `validate_http_url`; `add()` wraps the validator in a try/except converting `ValueError → PlaylistError` after the existing empty-string check; `add_many()` does the same per-item with an `items[{i}]:` prefix, inside the build loop (so a bad item raises before `pl.items.extend(normalized)` runs — partial append is structurally impossible).
+
+#### Verification
+- `.venv/bin/python -m py_compile mcp_sonos/_urls.py mcp_sonos/server.py mcp_sonos/controller.py mcp_sonos/playlists.py` — clean.
+- Direct validator checks:
+  - `validate_http_url('file:///etc/passwd')` → `ValueError: URL scheme must be http or https; got 'file'`.
+  - `validate_http_url('http://example.com/song.mp3')` → returns the URL unchanged.
+  - `validate_http_url('https://example.com/song.mp3')` → returns the URL unchanged.
+  - `validate_http_url('http:')` → `ValueError: URL must include a host; got 'http:'`.
+  - `validate_http_url('gopher://example.com/')` → `ValueError: URL scheme must be http or https; got 'gopher'`.
+  - `validate_http_url('')` → `ValueError: URL scheme must be http or https; got ''`.
+  - `validate_http_url('HTTP://example.com/')` → accepted (mixed case lowered before compare).
+- Tool surface (Pydantic `TypeAdapter` on `HttpUrl`):
+  - `file:///etc/passwd` → `pydantic.ValidationError`.
+  - `http://example.com/song.mp3` → accepted.
+- Controller surface: `SonosController().play_url('any', 'file:///bad')` → `ValueError` raised by `validate_http_url` (fires before `_resolve_coordinator`, so no hardware/lookup side effects).
+- Playlist surface:
+  - `manager.add('p_test', 'file:///bad')` → `PlaylistError: URL scheme must be http or https; got 'file'`.
+  - `manager.add_many('p_mixed', [{'url':'http://ok.example.com/song.mp3'},{'url':'file:///bad'}])` → `PlaylistError: items[1]: URL scheme must be http or https; got 'file'`, and `len(playlist.items) == 0` after the failed call — confirms no partial append.
+- `playlist_smoke.py` against live hardware: full pass — create, add (Piper TTS WAV URLs, `http://192.168.86.38:8000/...`), start, status, skip, stop-mid-track all worked end-to-end on Kitchen. No HttpUrl rejection on legitimate `http://` URLs.
+
+#### Notes
+- `smoke_test.py` deliberately skipped per leg guidance — the `say` anomaly surfaced in Leg 05 (`play_uri can only be called/used on the coordinator in a group`) is unrelated to URL-scheme validation and still pending Post-Flight investigation. Playlist smoke covers the `play_uri` regression surface this leg is most likely to affect.
+- The `HttpUrl` alias is defined at module scope in `server.py` but the two tool annotations (`play_url`, `playlist_add`) inline the `AfterValidator(validate_http_url)` next to their `Field(description=...)` because chaining `Field` onto an already-aliased `Annotated[...]` is awkward — the inlined form is what the leg guidance prescribes verbatim and it keeps the descriptions visible at the call-site. Kept the alias defined regardless so it's available as the canonical reusable form for any future tool that doesn't need a bespoke description.
+- `playlist_add_many` runs both the new in-tool scheme check (clean MCP error path) and then `PlaylistManager.add_many`'s built-in scheme check via the controller (the defence-in-depth path). The two messages differ slightly (`ValueError` vs `PlaylistError`) but the controller is shielded by the tool's earlier check in normal MCP flow.
+
 ### Leg 04 — F5 route say through `_group_members_of` helper
 **Status**: landed
 **Started**: 2026-05-18T13:50:00Z
@@ -132,25 +190,6 @@ Verified each finding against current code at flight planning time (2026-05-18, 
 - **Deviation from leg snippet**: the leg's prescriptive snippet wrote `self._group_members_of(coord)`, but `_group_members_of` is a module-level function (defined at line 64 of `controller.py`), not a `SonosController` method. All other call sites in the file use the bare `_group_members_of(coord)` form (lines 138, 165, 258, 283, 328). Followed the established convention — used the module-level call. Same semantics, no behavioral difference.
 - Smoke test does not pass a `volume` argument, so the modified `if volume is not None:` branch is not exercised end-to-end here. Confirmed by reading `smoke_test.py` output — `say(Kitchen)` and `say(all)` both took the no-volume path. The modified branch is now structurally identical to other helper call sites (e.g. line 138 `now_playing`) which are exercised by the smoke test, so the regression risk is very low. Explicit volume-on-say verification can be deferred to flight-level Post-Flight.
 - The `or [coord]` fallback drop is intentional, not an accidental loss — documented in the leg as provably unreachable given `_group_members_of`'s contract.
-
-### Leg 05 — F12 URL-encode audio host filenames
-**Status**: landed
-**Started**: 2026-05-18T13:55:00Z
-**Completed**: 2026-05-18T13:57:00Z
-
-#### Changes Made
-- `mcp_sonos/audio_host.py`: added `import urllib.parse` to module imports.
-- `mcp_sonos/audio_host.py`: in `url_for`, route `filename` through `urllib.parse.quote(filename)` (bound to local `safe`) before f-string interpolation. Default `quote` safe set (`/`) is fine here — `stage()` always passes `target.name` (a basename), and TTS WAV filenames are sha1-hex.
-
-#### Verification
-- `.venv/bin/python -m py_compile mcp_sonos/audio_host.py` — clean.
-- Inline check: `AudioHost(root=Path('/tmp'), host_ip='1.2.3.4', port=8000).url_for('My Song.mp3')` → `http://1.2.3.4:8000/My%20Song.mp3` (exact match).
-- Inline check: same instance, `url_for('simple.mp3')` → `http://1.2.3.4:8000/simple.mp3` (unchanged, no encoding noise).
-- `stage()` was already routing through `url_for` — no inline URL construction elsewhere in the module. Implementation guidance item 3 confirmed by reading.
-
-#### Notes
-- Smoke test (`smoke_test.py`) ran against live hardware: discovery succeeded (Dining Room, Fireplace Room, Kitchen, Lounge, Patio). The `say` call then failed with `play_uri can only be called/used on the coordinator in a group` — this is **unrelated** to Leg 05. `say` generates a sha1-hex TTS filename, which is URL-safe and unchanged in shape by the `quote` call. The failure is a pre-existing group-coordinator semantics issue in the `say` path, surfaced today (possibly because the smoke-test target speaker has been grouped under a different coordinator on the network since Leg 04's run). Flagged as anomaly below; will not be addressed in this leg per its narrow scope.
-- `play_file` against a space-containing filename was NOT exercised end-to-end against hardware in this leg — no staged file under `AUDIO_MEDIA_ROOT` available and no live target. URL string is correctness-verified; "Sonos accepts the encoded URL" portion of AC #3 carried to flight-level Post-Flight, consistent with prior legs' approach to live-hardware risk surfaces.
 
 ---
 
