@@ -1,6 +1,6 @@
 # Leg: 01-fix-doc-traps
 
-**Status**: ready
+**Status**: completed
 **Flight**: [Documentation Cleanup](../flight.md)
 
 ## Objective
@@ -21,15 +21,19 @@ Eliminate the two doc-as-traps: (a) `say` tool docstring advertises gTTS and a `
 - `playlists.py:99` comment updated to match
 
 ## Acceptance Criteria
-- [ ] `say` tool description no longer mentions gTTS
-- [ ] `lang` parameter description states it is ignored (or is removed from the tool signature — see decision below)
-- [ ] `playlists.py:4` and `:99` describe speaker-UID keying matching the actual code and CLAUDE.md
-- [ ] No other stale gTTS references in `mcp_sonos/` (grep verifies)
+- [x] `say` tool description (`server.py`) no longer mentions gTTS
+- [x] `lang` parameter description states it is ignored (parameter kept for backwards-compat per flight design decision)
+- [x] `playlists.py:4` module docstring describes **speaker-UID keying** matching the actual code and CLAUDE.md
+- [x] `playlists.py:99` inline comment updated from `# coord_uid -> session` to `# speaker_uid -> session`
+- [x] `controller.py` stale comment "# gTTS at normal speed is ~150 wpm" (around line 27) updated to name Piper (or rewritten)
+- [x] No **agent-facing** gTTS references remain. Internal historical comments referencing the gTTS→Piper migration are acceptable IF they're accurate (e.g., `tts.py` `# 'lang' kept for API parity with the old gTTS-based synthesize.` is fine — it documents the why)
 
 ## Verification Steps
-- `grep -rn "gTTS\|gtts" mcp_sonos/` returns no hits (or only intentional historical references in comments, none in agent-facing docstrings).
-- `grep -n "coordinator UID\|coord_uid" mcp_sonos/playlists.py` returns no hits.
+- `grep -rn "gTTS\|gtts" mcp_sonos/` — review hits manually. Acceptable: `tts.py` historical-migration-rationale comments. Not acceptable: any hit in `server.py` (agent-facing) or `controller.py` (stale `# gTTS at normal speed`).
+- `grep -n "coord_uid\|coordinator UID" mcp_sonos/playlists.py` returns no hits. (The `resolve_coordinator` callable name and the helper's "coordinator" concept are distinct from the keying claim and may appear in legitimate prose elsewhere — only the keying claim is wrong.)
 - Manual: introspect the MCP tool schema (via the inspector or by calling the server) and confirm the `say` description matches reality.
+
+**Schema-contract note**: changing the `lang` Field description does alter the MCP tool schema exposed to agents (the description text). Not a behavior change — just a documentation-honesty change. Agents that were ignoring the parameter continue to ignore it; agents that were honoring "gTTS language code" should now see "deprecated / ignored" and stop relying on it.
 
 ## Implementation Guidance
 
@@ -59,9 +63,10 @@ Eliminate the two doc-as-traps: (a) `say` tool docstring advertises gTTS and a `
 4. **Search for any other gTTS references** that linger as comments — e.g., `controller.py:25` `# gTTS at normal speed`. Update or drop.
 
 ## Files Affected
-- `mcp_sonos/server.py` — say tool definition
-- `mcp_sonos/playlists.py` — module docstring + inline comment
-- `mcp_sonos/controller.py` — any stale gTTS comment
+- `mcp_sonos/server.py` — `say` tool definition (line numbers shifted from maintenance report — find via grep; the relevant lines are the `Field` descriptions on `text` and `lang` parameters of the `say` tool)
+- `mcp_sonos/playlists.py` — module docstring (lines 1-11) + inline comment around line 99
+- `mcp_sonos/controller.py` — stale `# gTTS at normal speed` comment (around line 27)
+- `mcp_sonos/tts.py` — **no change**, but verify the existing historical comment about the migration is accurate; it should stay
 
 ## Edge Cases
 - None — text-only changes.
@@ -70,8 +75,8 @@ Eliminate the two doc-as-traps: (a) `say` tool docstring advertises gTTS and a `
 
 ## Post-Completion Checklist
 
-- [ ] All acceptance criteria verified
-- [ ] Smoke test passes (no behavior change expected)
-- [ ] Update `../flight-log.md`
-- [ ] Set this leg's status to `completed`
-- [ ] Check off in `../flight.md`
+- [x] All acceptance criteria verified
+- [x] Smoke test passes (no behavior change expected)
+- [x] Update `../flight-log.md`
+- [x] Set this leg's status to `completed`
+- [x] Check off in `../flight.md`

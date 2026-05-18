@@ -24,7 +24,7 @@ from .tts import synthesize
 
 
 # How long a single TTS clip is allowed to play before we give up
-# polling. gTTS at normal speed is ~150 wpm, so even long messages
+# polling. Piper at the default rate is ~150 wpm, so even long messages
 # finish well within this.
 TTS_TIMEOUT_SECONDS = 30
 

@@ -53,7 +53,21 @@ Verified each scope item against current code at flight planning time (2026-05-1
 
 ## Leg Progress
 
-(Append entries here as legs land.)
+### Leg 01 — Fix doc traps (F4)
+
+- **Status**: landed
+- **Started**: 2026-05-18
+- **Completed**: 2026-05-18
+- **Changes Made**:
+  - `mcp_sonos/server.py:194,196` — `say` tool `text` and `lang` Field descriptions rewritten. `text` now reads "...synthesized via Piper neural TTS." `lang` description marks the parameter Deprecated/Ignored and points at `PIPER_VOICE`. Parameter itself kept (flight design decision — schema-compatible).
+  - `mcp_sonos/playlists.py:1-13` — module docstring rewritten. Replaces the false "*coordinator UID*" keying claim with the correct speaker-UID keying, explains the re-resolve-per-iteration behavior, and explicitly calls out the coordinator-UID anti-pattern with a pointer to CLAUDE.md.
+  - `mcp_sonos/playlists.py:101` — inline comment `# coord_uid -> session` → `# speaker_uid -> session`.
+  - `mcp_sonos/controller.py:27` — stale `# gTTS at normal speed is ~150 wpm` → `# Piper at the default rate is ~150 wpm`. `TTS_TIMEOUT_SECONDS` value unchanged.
+- **Verification**:
+  - `grep -rn "gTTS\|gtts" mcp_sonos/` → only `tts.py:119` (historical migration-rationale comment — acceptable per leg spec).
+  - `grep -n "coord_uid\|coordinator UID" mcp_sonos/playlists.py` → only the docstring's *warning against* coordinator-UID keying remains; no `coord_uid` identifiers, no false keying claim.
+  - `python -m py_compile` clean on all three files.
+- **Notes**: Text-only changes. No behavior change. The `lang` Field description shift does alter the MCP tool schema text exposed to agents — that's the documentation-honesty intent of the leg. No smoke test run (documentation-only per Flight Director's pre-flight call).
 
 ---
 

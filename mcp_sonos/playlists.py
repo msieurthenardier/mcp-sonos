@@ -1,10 +1,13 @@
 """In-memory named playlists with continuous background playback.
 
 Each playlist is a named list of `PlaylistItem`s. Calling `play()` spawns
-a worker thread keyed by the resolved *coordinator UID* — the playlist
-follows that coordinator regardless of subsequent group changes, and
-external playback events (e.g., a `say()` call, a `play_url()`, a manual
-stop) cleanly terminate the session.
+a worker thread keyed by the originally-named *speaker's UID* (not the
+group coordinator's UID). The worker re-resolves the group coordinator on
+every iteration so the playlist follows the speaker through grouping
+changes. Keying by coordinator UID breaks the moment someone groups the
+speaker — see CLAUDE.md for the design history. External playback events
+(e.g., a `say()` call, a `play_url()`, a manual stop) cleanly terminate
+the session.
 
 Per-process state. Nothing persists across server restarts. That's
 deliberate — playlists are scratch space for the agent, not a library.
@@ -98,7 +101,7 @@ class PlaylistManager:
         SonosController."""
         self._resolve_coordinator = resolve_coordinator
         self._playlists: dict[str, Playlist] = {}
-        self._sessions: dict[str, PlaybackSession] = {}  # coord_uid -> session
+        self._sessions: dict[str, PlaybackSession] = {}  # speaker_uid -> session
         self._lock = threading.Lock()
 
     # ---- playlist CRUD -----------------------------------------------------

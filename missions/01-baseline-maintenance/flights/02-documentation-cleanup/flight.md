@@ -90,7 +90,7 @@ Six edits, all text or near-text. None touch runtime behavior except Leg 06 (`Ht
 
 ### Legs
 
-- [ ] `01-fix-doc-traps` — F4: rewrite say tool docstring + playlists.py module docstring
+- [x] `01-fix-doc-traps` — F4: rewrite say tool docstring + playlists.py module docstring
 - [ ] `02-remove-dead-lock-and-import` — F6: drop `Iterable` and `_lock` (and `import threading` if newly unused) from `controller.py`
 - [ ] `03-anonymize-lan-ips` — F10: replace real IPs with placeholders in `poc/debug_play.py` and `CLAUDE.md`
 - [ ] `04-fix-readme-tool-count` — F11: README "19 tools" → "32 tools"

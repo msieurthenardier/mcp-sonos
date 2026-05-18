@@ -191,9 +191,9 @@ def dissolve_all_groups() -> dict:
 @mcp.tool
 def say(
     target: Annotated[str, Field(description="Speaker name, or the literal 'all' to broadcast in sync across every speaker.")],
-    text: Annotated[str, Field(description="What to say. Plain text; will be synthesized via gTTS.")],
+    text: Annotated[str, Field(description="What to say. Plain text; synthesized via Piper neural TTS.")],
     volume: Annotated[int | None, Field(ge=0, le=100, description="Optional volume for the announcement (per affected speaker).")] = None,
-    lang: Annotated[str, Field(description="gTTS language code, e.g. 'en', 'fr', 'es'.")] = "en",
+    lang: Annotated[str, Field(description="Deprecated. Ignored. Voice selection is set process-wide via the PIPER_VOICE env var.")] = "en",
 ) -> dict:
     """Speak text on one speaker, the whole group, or 'all' speakers in sync.
 
