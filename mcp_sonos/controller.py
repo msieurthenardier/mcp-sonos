@@ -322,13 +322,43 @@ class SonosController:
             members = [self._resolve(n) for n in member_names]
             for m in members:
                 m.volume = volume
-        coord.play_uri(url, title=f"Say: {text[:40]}")
+        coord = self._play_uri_with_stale_coord_retry(
+            target, coord, url, title=f"Say: {text[:40]}"
+        )
         self._wait_until_stopped(coord)
         return {
             "spoken_on": coord.player_name,
             "group_members": _group_members_of(coord),
             "text": text,
         }
+
+    def _play_uri_with_stale_coord_retry(
+        self, name: str, coord: SoCo, url: str, *, title: str
+    ) -> SoCo:
+        """Call `coord.play_uri`, recovering once from a stale-coordinator
+        view. The mission's `say()` coordinator bug surfaces when SoCo's
+        in-process `group.coordinator` view claims the speaker IS a
+        coordinator (so `_coordinator_of` returns it) but the Sonos
+        firmware rejects `play_uri` with `SoCoSlaveException`. The local
+        SoCo cache is stale relative to firmware reality; forcing a
+        re-discovery and re-resolving usually picks up the actual
+        coordinator. Returns the coordinator that succeeded so the caller
+        can keep using it for follow-up calls (e.g. `_wait_until_stopped`).
+        """
+        # Imported lazily so the test fakes don't have to satisfy the
+        # SoCo type hierarchy for the happy path.
+        from soco.exceptions import SoCoSlaveException
+
+        try:
+            coord.play_uri(url, title=title)
+            return coord
+        except SoCoSlaveException:
+            # Invalidate the speakers cache, force re-discovery, and
+            # retry once. If firmware still rejects, propagate.
+            self._speakers_ts = 0.0
+            _, fresh_coord = self._resolve_coordinator(name)
+            fresh_coord.play_uri(url, title=title)
+            return fresh_coord
 
     def _say_all(self, text: str, url: str, volume: int | None) -> dict:
         # Dissolve, partymode, play, dissolve.

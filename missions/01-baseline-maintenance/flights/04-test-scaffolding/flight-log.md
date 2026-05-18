@@ -58,6 +58,42 @@ Verified each scope item against current code at flight planning time (2026-05-1
 
 ## Leg Progress
 
+**2026-05-18 — Leg 04 (`04-investigate-say-coordinator-bug`) landed**
+
+- **Outcome: FIX** (not xfail). Mission Known Issue `say()` coordinator-routing bug resolved. **10 tests pass, 0 fail, 0 xfail** (8 prior + 2 new from this leg).
+- **Phase A — bug reproduction (Path A succeeded on first try)**:
+  - Created `tests/test_say_coordinator.py` with a `_SlaveOnPlayUriFake(SoCoFake)` subclass — overrides `play_uri` to raise `SoCoSlaveException` while inheriting the default `group.coordinator = self` view (i.e. SoCo's local cache reports the speaker as coordinator-of-one). This is Flight 03 debrief's predicted shape: `list_groups` says coordinator, `play_uri` says otherwise.
+  - Imported `from soco.exceptions import SoCoSlaveException` IN THE TEST FILE; `tests/_fakes.py` is untouched (still zero `import soco` hits — fake stays SoCo-free per its docstring).
+  - Stubbed `controller_mod.AudioHost.start`, `controller_mod.synthesize`, `controller_mod.AudioHost.url_for`, and `SonosController._wait_until_stopped` to keep the test hardware-free and fast (full file runs in 0.19s). Patched `controller_mod.sp.discover_speakers` per test to return the staged fakes.
+- **Phase B — root-cause investigation**:
+  - Added `print(..., file=sys.stderr)` instrumentation in `say()` per the leg's snippet (also `import sys` at module top).
+  - Ran `pytest tests/test_say_coordinator.py -v -s` and observed: `target='Kitchen' s=Kitchen s.uid=RINCON_BUG0001 coord=Kitchen coord.uid=RINCON_BUG0001 coord.group.coordinator=Kitchen coord.group.coordinator.uid=RINCON_BUG0001`.
+  - **Key finding**: `coord.uid == coord.group.coordinator.uid`. **No controller-visible divergence exists before the call.** The divergence is between SoCo's in-process cache and the Sonos firmware — invisible to `_coordinator_of` and `_resolve_coordinator` no matter how cleverly they're rewritten. Hypothesis #1 (stale-cached SoCo) confirmed in its strongest form: the cache lies in a way the controller can't detect without invoking `play_uri` and observing the rejection.
+  - Implication: A "prefer `coord.group.coordinator` over `coord` when they differ" fix is impossible — they never differ in this state. The only fix shapes are (a) `SoCoSlaveException`-catching retry with forced re-discovery, or (b) blanket pre-emptive re-discovery before every `play_uri`. Option (a) is cheaper and more targeted.
+  - **Removed all `print(..., file=sys.stderr)` lines AND the `import sys`** before proceeding to Phase C. Verified via `grep -n "print.*file=sys.stderr" mcp_sonos/controller.py` returning zero hits.
+- **Phase C — fix decision (in-scope, FIX)**:
+  - Surface-guard check: the fix touches `controller.py::say()` (~5 lines wrapper change) + adds `controller.py::_play_uri_with_stale_coord_retry` (~20 lines new helper). No `playlists.py` touched, no SoCo internals, no new cache layer beyond `_speakers_fresh` (the fix uses the EXISTING cache, just invalidates its timestamp). **In-scope per surface guard.**
+  - Fix shape — `controller.py::_play_uri_with_stale_coord_retry(name, coord, url, *, title) -> SoCo`:
+    1. Lazy-imports `SoCoSlaveException` (so test fakes don't have to satisfy the SoCo type hierarchy for the happy path).
+    2. Calls `coord.play_uri(url, title=title)`; returns `coord` on success.
+    3. On `SoCoSlaveException`: sets `self._speakers_ts = 0.0` to force re-discovery on the next `_speakers_fresh()`; calls `_resolve_coordinator(name)` to get a fresh `SoCo`; calls `fresh_coord.play_uri(url, title=title)` once; returns `fresh_coord` so `_wait_until_stopped` runs on the speaker that actually accepted the call.
+  - `say()` reassigns its local `coord` to the helper's return value so the subsequent `_wait_until_stopped(coord)` runs against the right SoCo.
+  - Two test cases pin the fix:
+    1. `test_say_recovers_after_rediscover_returns_fresh_coordinator` — first discovery returns a `_SlaveOnPlayUriFake`; second returns a plain `SoCoFake`. Asserts `say()` returns normally, `result["spoken_on"] == "Kitchen"`, `fresh._track["uri"]` was set (proof `play_uri` reached the fresh fake), and exactly two discovery calls occurred.
+    2. `test_say_propagates_when_rediscover_also_returns_stale_coordinator` — both discoveries return a `_SlaveOnPlayUriFake`. Asserts `pytest.raises(SoCoSlaveException)` and exactly two discovery calls (no infinite retry loop). Pins the single-retry contract.
+- **Live-hardware verification deferred — blocked by NEW Leg 02 regression**:
+  - Attempted `.venv/bin/python smoke_test.py` to verify the fix end-to-end against Sonos hardware. Failed at `Server exposes 0 tools:` with `fastmcp.exceptions.ToolError: Unknown tool: 'list_speakers'`. Cause: Leg 02's DI refactor moved tool registration into `register_tools(mcp, controller)` called from `main()`, but `smoke_test.py:22` imports `mcp` directly and never calls `main()` — so the imported `mcp` instance has zero tools. `playlist_smoke.py:35` is worse: it `from mcp_sonos.server import mcp, controller`, and `controller` no longer exists at module level — raises `ImportError` on import.
+  - **This is a SECOND mission Known Issue surfaced by this leg, NOT a Leg 04 fix-or-xfail outcome.** Mission Known Issues updated with both items (say() bug resolved + new smoke-script regression to fix).
+  - The pytest suite remains the regression net for the `say()` fix; it deterministically exercises both halves (recovery + worst-case bound) without live hardware.
+- **Verification** (all hardware-independent):
+  1. `.venv/bin/python -m py_compile tests/test_say_coordinator.py mcp_sonos/controller.py` — clean.
+  2. `.venv/bin/pytest -v` — 10 passed in 0.26s, exit 0. The 8 prior tests + 2 new = no regressions in `validate_http_url`, `_verify_or_log`, or F1 takeover paths.
+  3. `grep -n "print.*file=sys.stderr" mcp_sonos/controller.py` — zero hits.
+  4. `grep -n "import soco\|from soco" tests/_fakes.py` — zero hits (fake stays SoCo-free).
+  5. `grep -n "import soco" tests/test_say_coordinator.py` — 1 hit on `from soco.exceptions import SoCoSlaveException` (correct placement: in the test, not in the fake).
+- **Hardware-dependent verification deferred**: `smoke_test.py` `say()` end-to-end verification blocked on the new Known Issue (smoke script wiring needs an update for the Leg 02 DI refactor — separate flight or post-mission maintenance).
+- Leg status: `ready` → `in-flight` → `landed`. Not committed (handoff to reviewer per `/agentic-workflow` Phase 2d).
+
 **2026-05-18 — Leg 03 (`03-first-unit-tests`) landed**
 
 - First batch of unit tests using Leg 02's scaffolding. **8 tests pass, 0 fail, 0 xfail.** No live hardware required — `SoCoFake` is the only "Sonos" present.
@@ -115,6 +151,14 @@ Verified each scope item against current code at flight planning time (2026-05-1
 
 ## Decisions
 
+**2026-05-18 — Leg 04: FIX (not xfail) on the `say()` coordinator bug**
+
+- **Decision**: Implement a `SoCoSlaveException`-catching retry with forced re-discovery in `controller.py::say()`, rather than mark the test `xfail`.
+- **Surface-guard evidence**: diff is contained to `controller.py` only — modifies `say()` (`mcp_sonos/controller.py:319-326`) and adds `_play_uri_with_stale_coord_retry` (new helper, ~20 lines, inserted after `say()`). No changes to `playlists.py`, `tts.py`, `_urls.py`, `server.py`, SoCo internals, or any new cache layer beyond the existing `_speakers_ts` invalidation. **In-scope per the leg's surface-area guard.**
+- **Hypothesis confirmed**: Hypothesis #1 (stale-cached SoCo) in its strongest form — `coord.uid` and `coord.group.coordinator.uid` agree at the call site (instrumented via `print(..., file=sys.stderr)` during Phase B, then removed). The divergence lives between SoCo's in-process cache and Sonos firmware, invisible to controller-side inspection. Hypothesis #2 (lull-state) was NOT explored — Path A reproduced cleanly so Path B wasn't needed; the lull-state path is a subset of the same fix (the retry catches both since both manifest as `SoCoSlaveException`).
+- **Rationale for FIX over xfail**: the leg's success criterion is "regression test scaffolding exists for this bug, fix if surface-guard-compliant." The retry pattern is the standard idiom for stale-cache recovery, fits cleanly in `say()`, and pins the single-retry contract via a worst-case test. Marking xfail would have left a real correctness bug unaddressed when the fix shape is well-understood and contained.
+- **Trade-off accepted**: the fix doesn't fire for transports OTHER than `say()` (e.g. `play_url`, `play_file` via the same coordinator path). The mission Known Issue only documented `say()` failures, so we're matching the documented bug surface. If `play_url` smoke runs surface the same `SoCoSlaveException` later, the fix can be generalized by lifting `_play_uri_with_stale_coord_retry` into `play_url` as well — minimal additional surface. Documented here for a future debrief to pick up.
+
 ---
 
 ## Deviations
@@ -122,6 +166,16 @@ Verified each scope item against current code at flight planning time (2026-05-1
 ---
 
 ## Anomalies
+
+**2026-05-18 — Leg 04: new mission Known Issue surfaced (Leg 02 DI-refactor regression in smoke scripts)**
+
+- During Leg 04's attempt at live-hardware verification of the `say()` fix via `smoke_test.py`, both smoke scripts were found broken by the Leg 02 DI refactor:
+  - `smoke_test.py` imports `mcp` from `mcp_sonos.server` and runs `Client(mcp)` without calling `main()` → 0 tools registered → `ToolError: Unknown tool: 'list_speakers'`.
+  - `playlist_smoke.py` imports `mcp, controller` from `mcp_sonos.server` → `controller` no longer exists at module level → `ImportError`.
+- **NOT a Leg 04 regression** — the cause is Leg 02's tool-registration relocation, but Leg 02's verification step `python -c "import mcp_sonos.server"` (correctly designed to confirm no TCP bind on import) did not exercise the FastMCP `Client(mcp)` path, so the symptom didn't surface until a smoke run was attempted.
+- **Pre-flight check** had this risk on the radar (`flight.md` line 59: "pre-flight smoke baseline" item is unchecked). It was never recorded — running it after Leg 02 would have caught both smoke scripts before Leg 04.
+- Logged as a new mission Known Issue; recommended next step is a small patch flight or post-mission maintenance run.
+- **Methodology takeaway for debrief**: when a DI refactor moves registration into `main()`, the smoke scripts' "import the running configuration" pattern silently breaks. Flag this in the Architect's leg-design review for DI-style refactors going forward.
 
 ---
 
