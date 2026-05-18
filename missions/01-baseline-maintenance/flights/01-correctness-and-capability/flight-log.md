@@ -3,7 +3,26 @@
 **Flight**: [Correctness and Capability Hardening](flight.md)
 
 ## Summary
-(Filled in during execution.)
+
+Flight landed 2026-05-18. All 6 legs completed and committed (one commit per leg). Reviewer confirmed `[HANDOFF:confirmed]` over cumulative changes with two non-blocking notes (see below).
+
+| Leg | Finding | Commit | Status |
+|-----|---------|--------|--------|
+| 01 | F1 — playlist takeover AttributeError | `44e58cd` | completed |
+| 02 | F2 — play_file media root + dir listing | `5d7b977` | completed |
+| 03 | F3 — AUDIO_PORT range validation | `5fb457c` | completed |
+| 04 | F5 — route say() through helper | `7d34a8a` | completed |
+| 05 | F12 — URL-encode filenames | `f5d2415` | completed |
+| 06 | F14 — URL scheme allow-list | `434ed5f` | completed |
+
+**Open items for Post-Flight verification by maintainer:**
+- F1 live takeover repro (induce `say()` mid-playlist and observe clean log).
+- F2 manual file-rejection checks against live hardware with `AUDIO_MEDIA_ROOT` set.
+- `smoke_test.py` `say()` anomaly observed at Leg 05 (`play_uri can only be called/used on the coordinator in a group`). Most likely Sonos household grouping topology, not a code regression (Leg 04 smoke ran `say` cleanly; Leg 05/06 don't touch the say path). Re-run smoke when household is in a known state.
+
+**Non-blocking notes from final Reviewer:**
+- `mcp_sonos/audio_host.py` env-port parsing: non-numeric `AUDIO_PORT` raises generic `int()` ValueError before reaching `_validate_port`'s nicer message. Acceptable; not in F3's stated scope.
+- `mcp_sonos/server.py` `playlist_add_many`: server-side per-index validator silently skips items missing `url` or non-dict items, deferring shape errors to `PlaylistManager.add_many`. Intentional and consistent with the existing `items[i]` idiom.
 
 ---
 
