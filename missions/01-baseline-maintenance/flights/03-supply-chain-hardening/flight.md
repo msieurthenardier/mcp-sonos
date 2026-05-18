@@ -1,6 +1,6 @@
 # Flight: Supply-Chain Hardening
 
-**Status**: in-flight
+**Status**: landed
 **Mission**: [Baseline Maintenance](../../mission.md)
 
 ## Contributing to Criteria
@@ -33,14 +33,15 @@ Tighten supply-chain trust assumptions. Three legs: pin the default Piper voice'
 - Trade-off: requires `pip install -e ".[dev]"` to get it
 
 ### Prerequisites
-- [ ] Have internet access (pip-audit fetches the OSV database)
+- [x] Have internet access — verified at flight execution; pip-audit fetched OSV database successfully
 
 ### Pre-Flight Checklist
 - [x] All open questions resolved
 - [x] Design decisions documented
-- [ ] Prerequisites verified (internet access)
+- [x] Prerequisites verified (internet access)
 - [x] Validation approach defined
 - [x] Legs defined
+- [x] Design reviewed by Architect (notes in flight log)
 
 ---
 
@@ -56,9 +57,9 @@ Three legs, ordered F8 → F13 → F17. F8 touches `tts.py`; F13 touches `pyproj
 **Smoke-test relevance**: F8 affects voice-model download — the cached voice already on disk will not re-trigger the path on next run. To validate, F8's Developer must delete the cached `.onnx` file and re-trigger via `say()` (or call the download function directly with a sandbox cache_dir). F13 + F17 have zero smoke-test impact.
 
 ### Checkpoints
-- [ ] F8: SHA-256 pin in place; manual test by deleting cached voice and re-downloading
-- [ ] F13: `pyproject.toml` updated; `pip install -e .` still works
-- [ ] F17: pip-audit runs cleanly; results captured in flight log
+- [x] F8: SHA-256 pin in place; verified against HuggingFace LFS pointer; tamper test confirmed quarantine + raise; trust-on-first-use confirmed
+- [x] F13: `pyproject.toml` updated; `pip install -e .` works (resolver no-op, `fastmcp==3.3.1` within cap)
+- [x] F17: pip-audit runs cleanly; baseline scan recorded **0 vulnerabilities across 104 packages** in flight log
 
 ### Adaptation Criteria
 
@@ -82,11 +83,12 @@ Three legs, ordered F8 → F13 → F17. F8 touches `tts.py`; F13 touches `pyproj
 ## Post-Flight
 
 ### Completion Checklist
-- [ ] All 3 legs completed
-- [ ] Smoke tests still pass
-- [ ] `pip install -e ".[dev]"` succeeds and pip-audit is available
-- [ ] Maintenance report findings F8, F13, F17 ticked in mission.md
-- [ ] Flight log filled in (includes the pip-audit baseline output)
+- [x] All 3 legs completed (each with its own commit: 34ff1ef, c65251f, 5047fe5 + flight-start 275e787)
+- [x] No smoke regression — F13 + F17 are zero smoke-impact; F8 verified hardware-independently (verify-existing + tamper test + trust-on-first-use). The mission Known Issues `say()` coordinator bug + Flight-02-discovered SSDP race remain unchanged
+- [x] `pip install -e ".[dev]"` succeeds and pip-audit is available (`pip-audit==2.10.0`)
+- [x] Maintenance report findings F8, F13, F17 ticked in mission.md
+- [x] Flight log filled in (per-leg entries + Decisions audit trail for the pinned hash + pip-audit baseline)
+- [ ] PR opened (Flight Director step)
 
 ### Verification
 - Delete `~/.cache/mcp-sonos/voices/en_US-lessac-medium.onnx`, run `mcp-sonos`, trigger `say`, verify voice download verifies against the pinned hash.

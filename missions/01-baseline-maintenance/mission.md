@@ -24,13 +24,13 @@ Full inspection details: [Maintenance Report 2026-05-18](../../maintenance/2026-
 - [x] F5 — `say()` (and any other group-access site) routes through `_group_members_of`
 - [x] F6 — Unused `Iterable` import and dead `threading.Lock` removed from `controller.py`
 - [ ] F7 — Pytest scaffolding exists; `SonosController` construction is deferred from module-level; a `SoCoFake` lets controller and playlists logic be exercised without live hardware; at least the F1 takeover path has a regression test
-- [ ] F8 — Default Piper voice has a pinned SHA-256 verified on download; non-default voices logged as trust-on-first-use
+- [x] F8 — Default Piper voice has a pinned SHA-256 verified on download; non-default voices logged as trust-on-first-use
 - [x] F10 — `poc/debug_play.py` and `CLAUDE.md` no longer contain the real LAN IPs; placeholders match `.env.example`'s `192.168.1.x` convention
 - [x] F11 — README "Architecture" section reflects 32 tools (or removes the count)
 - [x] F12 — `audio_host.url_for` URL-encodes filenames
-- [ ] F13 — `pyproject.toml` caps `fastmcp` at `<4` (and other deps as appropriate)
+- [x] F13 — `pyproject.toml` caps `fastmcp` at `<4` (and other deps as appropriate)
 - [x] F14 — `play_url` and `playlist_add`/`playlist_add_many` reject non-`http`/`https` schemes with a clear error
-- [ ] F17 — `pip-audit` baseline scan completed; results documented; pip-audit added to dev extras
+- [x] F17 — `pip-audit` baseline scan completed; results documented; pip-audit added to dev extras
 
 ## Stakeholders
 Maintainer (msieurthenardier). Self-deployed on home LAN; no external users.
@@ -59,5 +59,5 @@ N/A — findings are well-scoped from inspection; execution decisions belong in 
 
 - [x] Flight 1: [Correctness and Capability Hardening](flights/01-correctness-and-capability/flight.md) — F1, F2, F3, F5, F12, F14
 - [x] Flight 2: [Documentation Cleanup](flights/02-documentation-cleanup/flight.md) — F4, F6, F10, F11 (plus 3 debrief follow-ups bundled into the flight)
-- [ ] Flight 3: [Supply-Chain Hardening](flights/03-supply-chain-hardening/flight.md) — F8, F13, F17
+- [x] Flight 3: [Supply-Chain Hardening](flights/03-supply-chain-hardening/flight.md) — F8, F13, F17
 - [ ] Flight 4: [Test Scaffolding](flights/04-test-scaffolding/flight.md) — F7
