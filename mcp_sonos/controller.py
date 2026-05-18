@@ -83,7 +83,7 @@ def _speaker_dict(speaker: SoCo) -> dict:
 
 
 class SonosController:
-    """Stateful controller: speakers cache + audio host + lock."""
+    """Stateful controller: speakers cache + audio host."""
 
     def __init__(self, cache_dir: Path | None = None, audio_port: int | None = None):
         self.cache_dir = Path(cache_dir or tempfile.gettempdir()) / "mcp-sonos-audio"

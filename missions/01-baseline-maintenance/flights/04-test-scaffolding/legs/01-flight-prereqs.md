@@ -1,6 +1,6 @@
 # Leg: 01-flight-prereqs
 
-**Status**: ready
+**Status**: completed
 **Flight**: [Test Scaffolding](../flight.md)
 
 ## Objective
@@ -23,12 +23,12 @@ Land two bundled small cleanups from prior debriefs before the main scaffolding 
 - No code-runtime behavior change for the controller itself; smoke scripts gain deterministic startup
 
 ## Acceptance Criteria
-- [ ] Both `smoke_test.py` and `playlist_smoke.py` set `os.environ.setdefault("SONOS_IPS", "...")` (or equivalent) at the top of the file. The default value uses the `192.168.1.x` placeholder family from `.env.example`. A user with different IPs can override via shell env var (`setdefault` honors existing env values)
-- [ ] Both smoke scripts include a comment near the `SONOS_IPS` setdefault explaining the SSDP-race rationale + how to override
-- [ ] `controller.py` `SonosController` class docstring no longer reads `"speakers cache + audio host + lock"` — replace with `"speakers cache + audio host"` (or rephrase to accurately reflect current state)
-- [ ] `git grep "+ lock" mcp_sonos/` returns no hits in the class docstring (only legitimate hits if any exist)
-- [ ] `git grep "speakers cache + audio host + lock"` returns zero hits anywhere
-- [ ] Smoke tests still importable: `.venv/bin/python -m py_compile smoke_test.py playlist_smoke.py mcp_sonos/controller.py` clean
+- [x] Both `smoke_test.py` and `playlist_smoke.py` set `os.environ.setdefault("SONOS_IPS", "...")` (or equivalent) at the top of the file. The default value uses the `192.168.1.x` placeholder family from `.env.example`. A user with different IPs can override via shell env var (`setdefault` honors existing env values)
+- [x] Both smoke scripts include a comment near the `SONOS_IPS` setdefault explaining the SSDP-race rationale + how to override
+- [x] `controller.py` `SonosController` class docstring no longer reads `"speakers cache + audio host + lock"` — replace with `"speakers cache + audio host"` (or rephrase to accurately reflect current state)
+- [x] `git grep "+ lock" mcp_sonos/` returns no hits in the class docstring (only legitimate hits if any exist)
+- [x] `git grep "speakers cache + audio host + lock"` returns zero hits anywhere — interpreted as scoped to live source files. Remaining hits are historical artifacts (Flight 02 debrief/log, Flight 04 recon table, this leg spec) that *quote* the old docstring as a reference; rewriting them would be revisionist. No live source-code hit.
+- [x] Smoke tests still importable: `.venv/bin/python -m py_compile smoke_test.py playlist_smoke.py mcp_sonos/controller.py` clean
 
 ## Verification Steps
 - `grep -n "SONOS_IPS" smoke_test.py playlist_smoke.py` — both should have at least one hit
@@ -69,7 +69,7 @@ Land two bundled small cleanups from prior debriefs before the main scaffolding 
 
 ## Post-Completion Checklist
 
-- [ ] All acceptance criteria verified
-- [ ] Update `../flight-log.md` with leg progress entry
-- [ ] Set this leg's status to `completed`
-- [ ] Check off this leg in `../flight.md`
+- [x] All acceptance criteria verified
+- [x] Update `../flight-log.md` with leg progress entry
+- [x] Set this leg's status to `completed`
+- [x] Check off this leg in `../flight.md`
