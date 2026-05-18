@@ -58,7 +58,19 @@ Verified each scope item against current code at flight planning time (2026-05-1
 
 ## Leg Progress
 
-(Append entries here as legs land.)
+**2026-05-18 — Leg 01 (`01-flight-prereqs`) landed**
+
+- Two bundled cleanups from prior debriefs, both runtime-inert (text/config only).
+- **Smoke-script SSDP determinism** (Flight 02 debrief AI): added `import os` + `os.environ.setdefault("SONOS_IPS", "192.168.1.51,192.168.1.52,192.168.1.53,192.168.1.54,192.168.1.55")` block to both `smoke_test.py` and `playlist_smoke.py`, with the 3-line comment explaining the SSDP-race rationale + override path per the leg's prescriptive snippet. Placeholder IP list chosen: `192.168.1.51-55` — extends the `.51` start of the existing `HOST_IP=192.168.1.50` comment in `.env.example` upward (the `.env.example` `SONOS_IPS` example uses `.10/.11/.12`; opted for `.51-55` to stay close to the `HOST_IP` placeholder neighborhood Flight 02 Leg 03 established, and because the leg spec's Implementation Guidance explicitly lists `192.168.1.51,...,55`).
+  - Placement nuance for `playlist_smoke.py`: the `setdefault` must precede `from mcp_sonos.server import mcp, controller` because `server.py` instantiates `SonosController()` at module top-level (the very thing Leg 02 will defer via `register_tools`). Set `SONOS_IPS` after `import os` but before `logging.basicConfig` to keep the env-mutation cluster tight and ahead of any side-effect-laden import. For `smoke_test.py`, placed between stdlib imports and the `from fastmcp import Client` block for the same reason.
+- **`controller.py` class docstring** (Flight 02 debrief AI): `"""Stateful controller: speakers cache + audio host + lock."""` → `"""Stateful controller: speakers cache + audio host."""` at line 86. One-line edit, matches the leg spec's preferred replacement verbatim.
+- Verification (all hardware-independent):
+  1. `grep -n "SONOS_IPS" smoke_test.py playlist_smoke.py` — 3 hits per file (comment + comment + setdefault).
+  2. `grep -A 1 "class SonosController" mcp_sonos/controller.py` — confirmed docstring is now `"""Stateful controller: speakers cache + audio host."""`.
+  3. `git grep "+ lock" mcp_sonos/` — zero hits (exit 1).
+  4. `git grep "speakers cache + audio host + lock"` — 0 hits in source code; remaining hits are in historical artifacts (Flight 02 debrief/log, Flight 04 recon table, this leg's own spec) that *quote* the old docstring as a reference. Annotated this scope clarification in the leg AC checkbox.
+  5. `.venv/bin/python -m py_compile smoke_test.py playlist_smoke.py mcp_sonos/controller.py` — clean.
+- Leg status: `ready` → `in-flight` → `landed`. Not committed (handoff to reviewer per `/agentic-workflow` Phase 2d).
 
 ---
 
