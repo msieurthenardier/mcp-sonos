@@ -1,6 +1,6 @@
 # Leg: 06-restrict-play-url-schemes
 
-**Status**: ready
+**Status**: completed
 **Flight**: [Correctness and Capability Hardening](../flight.md)
 
 ## Objective
@@ -21,11 +21,14 @@ Reject non-`http`/`https` URL schemes at the `play_url`, `playlist_add`, and `pl
 - HTTP/HTTPS URLs continue to work
 
 ## Acceptance Criteria
-- [ ] `play_url("Kitchen", "file:///etc/passwd")` returns a validation error
-- [ ] `play_url("Kitchen", "gopher://example.com/")` returns a validation error
-- [ ] `play_url("Kitchen", "http://...")` and `play_url("Kitchen", "https://...")` still work
-- [ ] `playlist_add(..., url="file:///...")` and `playlist_add_many` with a bad item URL both reject
-- [ ] No regression in playlist smoke tests
+- [x] `play_url("Kitchen", "file:///etc/passwd")` returns a validation error at the MCP tool surface
+- [x] `play_url("Kitchen", "gopher://example.com/")` returns a validation error at the MCP tool surface
+- [x] `play_url("Kitchen", "http://example.com/song.mp3")` and `play_url("Kitchen", "https://example.com/song.mp3")` still work
+- [x] **Defence-in-depth — bypassing the MCP layer also rejects**: calling `controller.play_url("Kitchen", "file://...")` directly raises `ValueError`
+- [x] **Defence-in-depth — playlist module**: `controller.playlists.add("p", "file://...")` and `.add_many("p", [{"url":"file://..."}])` both raise `PlaylistError`
+- [x] `playlist_add_many` mixed-validity: `items=[{"url":"http://ok"},{"url":"file:///bad"}]` fails the whole call with an `items[1]` error and does NOT partially append (matches existing per-index fail-fast semantics)
+- [x] URLs without a netloc (e.g. `"http:"`, `"https:"`) are also rejected — scheme alone is insufficient
+- [x] No regression in playlist smoke tests
 
 ## Verification Steps
 - Manual: call `play_url` with a `file://` URL via an MCP client; observe the validation error in the MCP response.
@@ -34,16 +37,19 @@ Reject non-`http`/`https` URL schemes at the `play_url`, `playlist_add`, and `pl
 
 ## Implementation Guidance
 
-**Defence in depth**: validate at *both* the tool surface (clean MCP error for agents) AND the controller/playlist surface (catches non-MCP callers — future test scaffolding in Flight 4, automation scripts, anything that imports the controller directly). Same validator function reused at both sites.
+**Defence in depth**: validate at *both* the tool surface (clean MCP error for agents) AND the controller/playlist surface (catches non-MCP callers — future test scaffolding in Flight 4, automation scripts, anything that imports the controller directly). Same validator function reused at all three sites.
 
-1. **Create the validator** in `mcp_sonos/_urls.py` (or inline in `controller.py` if you'd rather keep modules light):
+1. **Create the validator** in a new module `mcp_sonos/_urls.py` (committed decision — inline in `controller.py` would require cross-module imports from `playlists.py` and `server.py`):
    ```python
    from urllib.parse import urlparse
    _ALLOWED_SCHEMES = {"http", "https"}
    def validate_http_url(u: str) -> str:
-       scheme = urlparse(u).scheme.lower()
+       parsed = urlparse(u)
+       scheme = parsed.scheme.lower()
        if scheme not in _ALLOWED_SCHEMES:
            raise ValueError(f"URL scheme must be http or https; got {scheme!r}")
+       if not parsed.netloc:
+           raise ValueError(f"URL must include a host; got {u!r}")
        return u
    ```
 
@@ -60,7 +66,19 @@ Reject non-`http`/`https` URL schemes at the `play_url`, `playlist_add`, and `pl
    @mcp.tool
    def playlist_add(name: PlaylistName, url: HttpUrl, ...): ...
    ```
-   For `playlist_add_many`, the items are `list[dict]` today. Either tighten the item shape with a Pydantic `PlaylistAddItem` model (cleanest) or run the validator inside the tool body before delegating to the controller.
+   For `playlist_add_many`: **validate inside the tool body** before delegating to the controller. Keeps `PlaylistManager.add_many` signature (`list[dict]`) stable. Tightening to a Pydantic `PlaylistAddItem` model would force a controller-signature change for a defence-in-depth fix — not worth it.
+   ```python
+   @mcp.tool
+   def playlist_add_many(name: PlaylistName, items: list[dict]) -> dict:
+       for i, raw in enumerate(items):
+           if isinstance(raw, dict) and "url" in raw:
+               try:
+                   validate_http_url(str(raw["url"]).strip())
+               except ValueError as e:
+                   raise ValueError(f"items[{i}]: {e}")
+       return controller.playlists.add_many(name, items).to_dict()
+   ```
+   The dict-shape check is loose here because `PlaylistManager.add_many` already enforces it at `playlists.py:144-149` with the same per-index error idiom — the tool-side validator just additionally checks scheme.
 
 3. **At the controller surface** — same validator, raised as plain `ValueError`:
    ```python
@@ -71,24 +89,35 @@ Reject non-`http`/`https` URL schemes at the `play_url`, `playlist_add`, and `pl
        ...
    ```
 
-4. **At the playlist surface** — `PlaylistManager.add` and `.add_many` in `playlists.py`:
+4. **At the playlist surface** — `PlaylistManager.add` and `.add_many` in `playlists.py`. Use `PlaylistError` (subclass of `ValueError`, defined at line 86) for consistency with surrounding error style:
    ```python
+   from ._urls import validate_http_url
+
    def add(self, name: str, url: str, title: Optional[str] = None) -> Playlist:
        ...
        url = url.strip()
        if not url:
            raise PlaylistError("url is empty")
-       validate_http_url(url)
+       try:
+           validate_http_url(url)
+       except ValueError as e:
+           raise PlaylistError(str(e))
        ...
+
    def add_many(self, name: str, items: list[dict]) -> Playlist:
        ...
-       url = str(raw["url"]).strip()
-       if not url:
-           raise PlaylistError(f"items[{i}] has empty url")
-       validate_http_url(url)
-       ...
+       for i, raw in enumerate(items):
+           ...
+           url = str(raw["url"]).strip()
+           if not url:
+               raise PlaylistError(f"items[{i}] has empty url")
+           try:
+               validate_http_url(url)
+           except ValueError as e:
+               raise PlaylistError(f"items[{i}]: {e}")
+           ...
    ```
-   In playlists, wrap the `validate_http_url` call in a `try` to convert `ValueError` → `PlaylistError` for consistent error types within the playlist module — or accept `ValueError` is fine. Match the surrounding style.
+   Note the `add_many` build-then-extend pattern at `playlists.py:144-153`: validation happens in the build loop, so a bad item raises before `pl.items.extend(normalized)` runs — partial append is structurally impossible. The mixed-validity AC is satisfied by this existing structure.
 
 ## Files Affected
 - `mcp_sonos/server.py` — three tool definitions
@@ -103,8 +132,8 @@ Reject non-`http`/`https` URL schemes at the `play_url`, `playlist_add`, and `pl
 
 ## Post-Completion Checklist
 
-- [ ] All acceptance criteria verified
-- [ ] Playlist smoke test passes
-- [ ] Update `../flight-log.md`
-- [ ] Set this leg's status to `completed`
-- [ ] Check off in `../flight.md`
+- [x] All acceptance criteria verified
+- [x] Playlist smoke test passes
+- [x] Update `../flight-log.md`
+- [x] Set this leg's status to `completed`
+- [x] Check off in `../flight.md`

@@ -12,8 +12,9 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastmcp import FastMCP
-from pydantic import Field
+from pydantic import AfterValidator, Field
 
+from ._urls import validate_http_url
 from .controller import SonosController
 
 
@@ -37,6 +38,13 @@ SpeakerName = Annotated[
     str,
     Field(description="Display name of a Sonos speaker, e.g. 'Kitchen'. Case-insensitive."),
 ]
+
+
+# Scheme allow-list applied to every URL the agent can hand to the speaker.
+# Rejects `file://`, `gopher://`, custom Sonos-internal schemes, etc., before
+# they reach SoCo, so the MCP response carries a clean validation error
+# instead of a UPnP "Illegal MIME-Type" surprise.
+HttpUrl = Annotated[str, AfterValidator(validate_http_url)]
 
 
 # ---- queries ----------------------------------------------------------------
@@ -72,7 +80,11 @@ def now_playing(speaker: SpeakerName) -> dict:
 @mcp.tool
 def play_url(
     speaker: SpeakerName,
-    url: Annotated[str, Field(description="HTTP(S) URL the speaker should play. Must be reachable from the Sonos LAN.")],
+    url: Annotated[
+        str,
+        AfterValidator(validate_http_url),
+        Field(description="HTTP(S) URL the speaker should play. Must be reachable from the Sonos LAN."),
+    ],
     title: Annotated[str | None, Field(description="Optional title shown on the Sonos display.")] = None,
 ) -> dict:
     """Play an arbitrary HTTP URL on the speaker's group coordinator."""
@@ -228,7 +240,11 @@ def playlist_clear(name: PlaylistName) -> dict:
 @mcp.tool
 def playlist_add(
     name: PlaylistName,
-    url: Annotated[str, Field(description="HTTP(S) URL of an audio track. Prefer plain HTTP MP3 — see README for stream-format gotchas.")],
+    url: Annotated[
+        str,
+        AfterValidator(validate_http_url),
+        Field(description="HTTP(S) URL of an audio track. Prefer plain HTTP MP3 — see README for stream-format gotchas."),
+    ],
     title: Annotated[str | None, Field(description="Optional display title for the Sonos UI and `now_playing`.")] = None,
 ) -> dict:
     """Append one item to a playlist."""
@@ -250,6 +266,16 @@ def playlist_add_many(
     ],
 ) -> dict:
     """Append many items to a playlist in one call. Use this for bulk-loading."""
+    # Scheme validation up front so the MCP response carries a clean
+    # per-index error before we even reach the controller. Dict-shape
+    # enforcement is intentionally lax here — PlaylistManager.add_many
+    # already rejects missing/empty `url` with the same idiom.
+    for i, raw in enumerate(items):
+        if isinstance(raw, dict) and "url" in raw:
+            try:
+                validate_http_url(str(raw["url"]).strip())
+            except ValueError as e:
+                raise ValueError(f"items[{i}]: {e}")
     return controller.playlists.add_many(name, items).to_dict()
 
 
