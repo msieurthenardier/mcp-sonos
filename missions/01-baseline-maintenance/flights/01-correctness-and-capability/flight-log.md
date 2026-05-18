@@ -113,6 +113,26 @@ Verified each finding against current code at flight planning time (2026-05-18, 
 - Live-hardware smoke tests not re-run: F3 is a startup-time validation on a single env-read path. Behavior change is limited to "raises early instead of failing silently mid-playback" for out-of-range values; in-range values traverse identical code to before. No state-machine, playback, or HTTP-handler surface touched.
 - Non-integer `AUDIO_PORT` (e.g. `"abc"`) continues to fail via `int(env)` `ValueError` before `_validate_port` runs — left as-is per leg's "Edge Cases" guidance.
 
+### Leg 04 — F5 route say through `_group_members_of` helper
+**Status**: landed
+**Started**: 2026-05-18T13:50:00Z
+**Completed**: 2026-05-18T13:52:00Z
+
+#### Changes Made
+- `mcp_sonos/controller.py`: inside `say()`, replaced the inline `coord.group.members` block (try/except + `members or [coord]` fallback) with the helper-driven equivalent — call `_group_members_of(coord)` to get member names, then list-comprehend `self._resolve(n)` to map back to SoCo objects. Dropped the `or [coord]` fallback (provably unreachable — `_group_members_of` guarantees a non-empty list via its `[speaker.player_name]` failure-path fallback).
+
+#### Verification
+- Baseline grep before edit: `grep -n "\.group\.members" mcp_sonos/controller.py` → 4 line hits across 2 logical sites (helper definition lines 66–67, inline access lines 322–323).
+- After edit: `grep -n "\.group\.members"` → 2 line hits, both inside `_group_members_of`'s body (lines 66–67) — one logical site, satisfying the acceptance criterion.
+- `grep -n "\.group\.coordinator"` → 1 hit (line 56, inside `_coordinator_of`) — no drift elsewhere.
+- `.venv/bin/python -m py_compile mcp_sonos/controller.py` — clean.
+- Live-hardware smoke test (`smoke_test.py`) passed end-to-end: `say(Kitchen)` and `say(all)` both succeeded against the five-speaker set (Dining Room, Fireplace Room, Kitchen, Lounge, Patio).
+
+#### Notes
+- **Deviation from leg snippet**: the leg's prescriptive snippet wrote `self._group_members_of(coord)`, but `_group_members_of` is a module-level function (defined at line 64 of `controller.py`), not a `SonosController` method. All other call sites in the file use the bare `_group_members_of(coord)` form (lines 138, 165, 258, 283, 328). Followed the established convention — used the module-level call. Same semantics, no behavioral difference.
+- Smoke test does not pass a `volume` argument, so the modified `if volume is not None:` branch is not exercised end-to-end here. Confirmed by reading `smoke_test.py` output — `say(Kitchen)` and `say(all)` both took the no-volume path. The modified branch is now structurally identical to other helper call sites (e.g. line 138 `now_playing`) which are exercised by the smoke test, so the regression risk is very low. Explicit volume-on-say verification can be deferred to flight-level Post-Flight.
+- The `or [coord]` fallback drop is intentional, not an accidental loss — documented in the leg as provably unreachable given `_group_members_of`'s contract.
+
 ---
 
 ## Decisions

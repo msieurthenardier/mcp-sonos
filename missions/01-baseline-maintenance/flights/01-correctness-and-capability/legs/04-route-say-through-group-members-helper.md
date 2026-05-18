@@ -1,15 +1,17 @@
 # Leg: 04-route-say-through-group-members-helper
 
-**Status**: ready
+**Status**: completed
 **Flight**: [Correctness and Capability Hardening](../flight.md)
 
 ## Objective
-Replace the inline `coord.group.members` access in `controller.py:309-314` with a call through `_group_members_of`, preserving the CLAUDE.md invariant that "every method that touches `speaker.group.coordinator` or `speaker.group.members` must go through these" (Finding F5 from [Maintenance Report 2026-05-18](../../../../maintenance/2026-05-18.md)).
+Replace the inline `coord.group.members` access inside `say()` (the `if volume is not None:` block) with a call through `_group_members_of`, preserving the CLAUDE.md invariant that "every method that touches `speaker.group.coordinator` or `speaker.group.members` must go through these" (Finding F5 from [Maintenance Report 2026-05-18](../../../../maintenance/2026-05-18.md)).
+
+> Note on line numbers: Leg 02 added `import os` and new init/play_file content to `controller.py`, shifting all `say()` line numbers down by ~12. The block to replace is identifiable by description (inside `say()`, inside the `if volume is not None:` branch) — verify by reading current code rather than relying on a specific line number citation in this leg.
 
 ## Context
-- `controller.py:309-314` is inside `say()`. It uses an inline `try/except` around `coord.group.members` to guard against the transient `None` state that occurs after rapid group dissolves.
-- This is functionally equivalent to `_group_members_of` today, but violates the stated invariant. Any future contributor who reads `controller.py` top-down sees one pattern in `_group_members_of` and another inline at line 309-314; they may copy the inline pattern when adding new methods, reintroducing the `AttributeError: NoneType ...` crashes the helper was created to prevent.
-- `_group_members_of` returns member *names* (strings), not SoCo objects. `say()` needs SoCo objects (for join/transport calls), so either: (a) call `_group_members_of` and then `_resolve(name)` for each, or (b) extend `_group_members_of` to optionally return SoCo objects.
+- Inside `say()`, the inline block uses `try/except` around `coord.group.members` to guard against the transient `None` state that occurs after rapid group dissolves.
+- This is functionally equivalent to `_group_members_of` today, but violates the stated invariant. Any future contributor who reads `controller.py` top-down sees one pattern in `_group_members_of` and another inline; they may copy the inline pattern when adding new methods, reintroducing the `AttributeError: NoneType ...` crashes the helper was created to prevent.
+- `_group_members_of` returns member *names* (strings), not SoCo objects. `say()` needs SoCo objects (for setting volume on each member), so either: (a) call `_group_members_of` and then `_resolve(name)` for each, or (b) extend `_group_members_of` to optionally return SoCo objects. **This leg uses option (a)**; option (b) is out of scope (only one call site needs objects).
 
 ## Inputs
 - `mcp_sonos/controller.py:309-314` inline `coord.group.members` access in `say()`
@@ -20,30 +22,39 @@ Replace the inline `coord.group.members` access in `controller.py:309-314` with 
 - Same external behavior
 
 ## Acceptance Criteria
-- [ ] `controller.py` has no inline `.group.members` access outside `_group_members_of`
-- [ ] `say(target="all", ...)` still works against live hardware
-- [ ] `say(target="<single speaker>", ...)` still works
-- [ ] Grep audit: `grep -n "\.group\.members" mcp_sonos/controller.py` returns hits only inside `_group_members_of`'s definition
+- [x] `controller.py` has no inline `.group.members` access outside `_group_members_of`
+- [x] `say(target="all", ...)` still works against live hardware
+- [x] `say(target="<single speaker>", ...)` still works
+- [x] Grep audit: `grep -n "\.group\.members" mcp_sonos/controller.py` returns exactly **one** hit, inside `_group_members_of`'s definition body (2 line-hits — both inside the helper body)
+- [x] `or [coord]` fallback dropped (provably unreachable — `_group_members_of` always returns a non-empty list, falling back to `[speaker.player_name]` in the failure case); this simplification is intentional, not an accidental loss
 
 ## Verification Steps
-- `grep -n "\.group\.members" mcp_sonos/controller.py` → only one hit (inside `_group_members_of`).
-- Manual: `say("all", "test")` works.
+- **Before editing**: `grep -n "\.group\.members" mcp_sonos/controller.py` → expect 2 hits (helper definition + inline access in `say`).
+- **After editing**: `grep -n "\.group\.members" mcp_sonos/controller.py` → exactly 1 hit (helper only).
+- Manual: `say("all", "test")` works against live hardware.
 - Manual: `say("Kitchen", "test")` works.
 - `smoke_test.py` passes (covers `say` via the `Sonos says hello` line).
 
 ## Implementation Guidance
 
-1. **Read** the current block at `controller.py:309-314`. Architect's finding cites a try/except around `coord.group.members`. Confirm the actual shape before editing.
+1. **Read** the current `say()` method to confirm the shape (line numbers shifted by Leg 02 — find the block by description: inside `say()`, inside `if volume is not None:`).
 
-2. **Refactor option A (preferred)**: Call `_group_members_of(coord)` to get names, then `[self._resolve(n) for n in member_names]` to get SoCo objects:
+2. **Replace the inline block** with the helper-driven equivalent:
    ```python
-   member_names = self._group_members_of(coord)
-   members = [self._resolve(n) for n in member_names]
+   if volume is not None:
+       member_names = self._group_members_of(coord)
+       members = [self._resolve(n) for n in member_names]
+       for m in members:
+           m.volume = volume
    ```
+   Notes:
+   - `_group_members_of(coord)` guarantees a non-empty list — falls back to `[coord.player_name]` (line 69) when `coord.group.members` raises or is empty.
+   - Drop the `or [coord]` fallback — it's now provably unreachable. Don't carry it as belt-and-suspenders; the helper IS the contract.
+   - `self._resolve(name)` looks up the SoCo in the cached speakers list. In theory a stale cache could return a different SoCo than the original `coord`; in practice the 30s TTL plus the just-resolved coordinator at the top of `say()` makes this effectively impossible.
 
-3. **Refactor option B**: Extend `_group_members_of` with an optional `return_speakers=False` parameter that returns SoCo objects when True. Only do this if the resolve hop in option A turns out to repeat across multiple call sites.
+3. **Sanity check**: `grep -n "\.group\.coordinator\|\.group\.members" mcp_sonos/controller.py` after the edit — should show only matches inside the two helpers (`_coordinator_of` at line ~45 and `_group_members_of` at line ~63). Inspector reported only `say()` drifts; verify no other site quietly drifted since the report.
 
-4. **Sanity check** the rest of `controller.py` for other inline group/coordinator accesses that should also be routed through the helpers — Inspector reported only the one in `say()`, but a fresh grep catches any drift since the report was written.
+4. **Out of scope**: extending `_group_members_of` to return SoCo objects (option B). Only one call site needs objects; option A keeps the helper's contract single-purpose.
 
 ## Files Affected
 - `mcp_sonos/controller.py` — `say()` method (and possibly `_group_members_of` if option B)
@@ -56,8 +67,8 @@ Replace the inline `coord.group.members` access in `controller.py:309-314` with 
 
 ## Post-Completion Checklist
 
-- [ ] All acceptance criteria verified
-- [ ] Smoke test passes (covers `say`)
-- [ ] Update `../flight-log.md`
-- [ ] Set this leg's status to `completed`
-- [ ] Check off in `../flight.md`
+- [x] All acceptance criteria verified
+- [x] Smoke test passes (covers `say`)
+- [x] Update `../flight-log.md`
+- [x] Set this leg's status to `completed`
+- [x] Check off in `../flight.md`
