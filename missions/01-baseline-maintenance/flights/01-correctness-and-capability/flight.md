@@ -23,38 +23,55 @@ N/A — fixes are concrete; design decisions captured below.
 
 ### Design Decisions
 
-**AUDIO_MEDIA_ROOT default**: If unset, `play_file` is disabled (returns a clear error pointing at the env var). Don't default to `~/Music` — too implicit, and an empty default forces the maintainer to make a conscious choice.
+**AUDIO_MEDIA_ROOT filters at controller, not at serve root**: The audio HTTP serve root (`/tmp/mcp-sonos-audio/`) is shared between TTS WAVs (written by Piper) and `play_file`-staged copies. F2's allow-list therefore filters `play_file` *inputs* in `controller.py` before `audio.stage(p)` is called. `stage()` itself is unchanged.
+- Rationale: TTS must continue to land in the serve root; only `play_file` is the threat-crossing surface
+- Trade-off: validation lives in `controller.play_file` rather than `AudioHost.stage` — less universal but more precise. Recon surfaced this; the original maintenance report didn't distinguish the two surfaces
+
+**AUDIO_MEDIA_ROOT default**: If unset, `play_file` is disabled (returns a clear error pointing at the env var). Don't default to `~/Music` — too implicit.
 - Rationale: explicit is safer than implicit for a capability that crosses the threat model
 - Trade-off: existing scripts/agent flows that called `play_file` will get a clear error until `AUDIO_MEDIA_ROOT` is set; one-time configuration cost
 
-**Directory-listing disabled by subclassing**: Override `list_directory` to return 404 rather than dropping an `index.html` into the serve root.
-- Rationale: cleaner separation; the serve root is a cache directory and shouldn't contain "real" files
-- Trade-off: one extra class
-
-**Port range constant**: Validate against the existing `PORT_RANGE` constant in `audio_host.py` (already defined for the auto-selection path); raise `ValueError` with a message naming the firewall rule.
-- Rationale: reuse the same constant that drives the auto-pick logic
+**Directory-listing disabled by subclassing**: Override `list_directory` in the existing `Handler` subclass in `audio_host.py:57-62` to return 404. The serve root is a cache directory, not a browse target.
+- Rationale: cleaner than dropping an `index.html`; subclass already exists for `log_message` silencing
 - Trade-off: none
 
-**URL scheme allow-list**: Apply Pydantic validator at the tool surface (`server.py`) so the agent sees a clean validation error in the MCP response, not a SoCo exception.
-- Rationale: enforce at the boundary
-- Trade-off: validation duplicated if controller is called from a non-MCP context — acceptable
+**Port range constant**: Validate against the existing `PORT_RANGE` constant (`audio_host.py:19`, already used by the auto-selection path); raise `ValueError` with a message naming the firewall rule.
+- Rationale: reuse the constant that drives auto-pick
+- Trade-off: none
+
+**F5 helper option**: `_group_members_of` returns sorted speaker **names** (strings), not SoCo objects (verified at `controller.py:63-69`). The `say()` inline block needs SoCo objects to set per-member volume. Refactor: call `_group_members_of(coord)`, then `[self._resolve(n) for n in member_names]`. Don't extend the helper to optionally return SoCo objects — that bloats its contract for one caller.
+- Rationale: preserves the helper's single-purpose API; one map call is cheap
+- Trade-off: an extra resolve hop per call; acceptable
+
+**URL scheme allow-list**: Apply at the tool surface (`server.py`) for `play_url`; also apply at `playlists.add`/`add_many` since those carry the same risk. Lowercase before compare. Reject anything not in `{http, https}` with a clear validation error.
+- Rationale: enforce at the boundary, agent sees a clean MCP error
+- Trade-off: tool-side validation is duplicated if controller is called from a non-MCP context — acceptable
 
 ### Prerequisites
-- [ ] Smoke tests work on user's hardware (`smoke_test.py` + `playlist_smoke.py`)
+- [ ] Pre-flight baseline: smoke tests pass against live hardware (record timestamp in flight log)
 
 ### Pre-Flight Checklist
 - [x] All open questions resolved
 - [x] Design decisions documented
-- [ ] Prerequisites verified (run smoke tests before starting)
-- [x] Validation approach defined (smoke tests after each leg)
+- [ ] Pre-flight baseline recorded in flight log
+- [x] Validation approach defined (smoke-test coverage notes in In-Flight section)
 - [x] Legs defined
+- [x] Design reviewed by Architect (notes in flight log)
 
 ---
 
 ## In-Flight
 
 ### Technical Approach
-Six discrete legs, each scoped to one finding. F2 is the largest (env var + path validation + extension allow-list + disable directory listing); the others are 5–15 line changes. After each leg, run the relevant smoke test against live hardware to confirm no regression. Final commit covers the full flight.
+Six discrete legs, each scoped to one finding. F2 is the largest (env var + path validation + extension allow-list + disable directory listing); the others are 5–15 line changes.
+
+**Commit cadence**: one commit per leg. The legs are independent and revertable; per-leg commits keep `git bisect` and selective revert trivial if a later leg surfaces a regression in an earlier one. The flight log gets an entry per leg too — code + log entry land together.
+
+**Smoke-test coverage during the flight is incomplete by design**:
+- `smoke_test.py` exercises F5 (the `say()` paths) — the F5 leg is well-covered.
+- `playlist_smoke.py` exercises the takeover branch (F1) only if a `say()` or `play_url()` interrupts the playlist mid-run, which the current script does NOT trigger. F1's takeover path is therefore exercised by manual one-shot verification.
+- **F2, F3, F12, F14 are NOT covered by either smoke test.** They ride on the explicit manual verifications listed in Post-Flight Verification.
+- Optional: add a one-line `say()` mid-playlist call to `playlist_smoke.py` to exercise F1's clean-warning path; defer if it expands scope.
 
 ### Checkpoints
 - [ ] F1 lands and external-takeover detection logs cleanly (manual repro via `playlist_smoke.py` style takeover)
@@ -87,11 +104,10 @@ Six discrete legs, each scoped to one finding. F2 is the largest (env var + path
 ## Post-Flight
 
 ### Completion Checklist
-- [ ] All 6 legs completed
-- [ ] Smoke tests pass against live hardware (basic + playlist)
-- [ ] Code merged (single commit on `main`)
+- [ ] All 6 legs completed (each with its own commit)
+- [ ] Smoke tests pass against live hardware (basic + playlist) at flight end
 - [ ] Maintenance report findings F1, F2, F3, F5, F12, F14 ticked in `missions/01-baseline-maintenance/mission.md`
-- [ ] Flight log filled in
+- [ ] Flight log filled in (per-leg entries + final summary)
 
 ### Verification
 - `playlist_smoke.py` exercises the takeover branch — log output should include the new clean warning, not an AttributeError trace caught by the outer except.
