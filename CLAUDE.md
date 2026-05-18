@@ -144,9 +144,9 @@ re-synthesize.
 - **Agent system prompt** is in README under "System prompt for your
   agent" — keep it in sync when adding/removing tools or behaviors.
 - **The user runs from WSL2 with mirrored networking** (LAN
-  192.168.86.0/24, host 192.168.86.38, 5 Connect:Amp speakers at
-  .49/.50/.51/.52/.53). The Windows Firewall rule "WSL-Sonos-Audio"
-  is already in place on their machine.
+  192.168.1.0/24, host 192.168.1.50, 5 Connect:Amp speakers at
+  .51/.52/.53/.54/.55 in the example). The Windows Firewall rule
+  "WSL-Sonos-Audio" is already in place on their machine.
 
 ## Flight Operations
 

@@ -85,6 +85,20 @@ Verified each scope item against current code at flight planning time (2026-05-1
   - No smoke test (per Flight Director's pre-flight call; deletions are inert).
 - **Notes**: Pure deletion, ~5 lines removed across the import block and `__init__`. No behavior change — the `_lock` had no usage sites, so removing it cannot have functional impact. The misleading "controller is thread-safe" signal is now gone; if real concurrency becomes a concern, the F7 test-scaffolding work will need to model proper synchronization around `_speakers`/`_speakers_ts` rather than reviving a class-level lock. The class docstring still says "speakers cache + audio host + lock" — left in place per the leg spec's tight scope (Iterable + lock + threading); that docstring drift is a candidate for a future micro-cleanup if anyone trips on it.
 
+### Leg 03 — Anonymize LAN IPs (F10)
+
+- **Status**: landed
+- **Started**: 2026-05-18
+- **Completed**: 2026-05-18
+- **Changes Made**:
+  - `poc/debug_play.py:24` — `TARGET_IP = "192.168.86.53"` → `TARGET_IP = "192.168.1.53"` (Kitchen comment preserved; last octet kept for readability against the prior speaker mapping).
+  - `CLAUDE.md:146-149` — anonymized the WSL2 networking note. Subnet `192.168.86.0/24` → `192.168.1.0/24`; host `192.168.86.38` → `192.168.1.50`; speakers `.49/.50/.51/.52/.53` → `.51/.52/.53/.54/.55` ("in the example" wording added to mark these as placeholders). WSL2 mirrored-networking note and `WSL-Sonos-Audio` firewall-rule name kept (not subnet leaks).
+- **Verification**:
+  - `git grep -n "192\.168\.86" -- ":!.venv/"` → only hits in `missions/` (historical artifact records — preserved as evidence snapshots per leg constraint). Zero hits in `poc/`, `mcp_sonos/`, `README.md`, `CLAUDE.md`, `.env.example`, `pyproject.toml`.
+  - `git grep -n "192\.168" -- ":!.venv/" ":!missions/" ":!maintenance/"` → all remaining hits use the `192.168.1.x` placeholder family (consistent with `.env.example` and `README.md`).
+  - `.venv/bin/python -m py_compile poc/debug_play.py` → clean.
+- **Notes**: Text-only docs-only change. The maintainer's live config (actual firewall rule, real speaker IPs) is unaffected — only the *documented* example values are anonymized. Historical artifacts under `missions/` retain the original subnet values as evidence of the finding; this is the intended behavior per the leg's "snapshots are preserved" constraint.
+
 ---
 
 ## Decisions
