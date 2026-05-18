@@ -20,11 +20,15 @@ Add `pip-audit` to a `dev` optional-dependency group, run a baseline vulnerabili
 - Any high/critical CVEs reported → either resolved (if trivial) or logged as a follow-up finding (defer to next maintenance cycle)
 
 ## Acceptance Criteria
-- [ ] `pyproject.toml` declares `[project.optional-dependencies] dev = ["pip-audit", ...]`
+- [ ] `pyproject.toml` declares `[project.optional-dependencies] dev = ["pip-audit"]` — scoped to pip-audit only, NOT pytest (Flight 04 owns pytest; bundling here would couple flights)
 - [ ] `.venv/bin/pip install -e ".[dev]"` succeeds and installs pip-audit
 - [ ] `.venv/bin/pip-audit` runs without error
-- [ ] Output captured in `../flight-log.md` (summarize, don't dump raw output — if many findings, list count by severity and the top 3)
-- [ ] If any high/critical CVE found against a direct dep, raise as a deviation in the flight log and decide: fix-in-this-flight or open a follow-up
+- [ ] Output captured in `../flight-log.md`: severity counts (none / low N / medium N / high N / critical N) and the top 3 findings by severity. Don't paste raw tool output — summarize and reference
+- [ ] **Triage convention applied** (record decision per finding in flight log):
+  - **Critical / High against any dep**: divert — fix in this flight as a 4th leg, OR open a follow-up finding in the next maintenance report. Decide based on whether a fix is available
+  - **Medium against direct dep WITH a fix available**: open a follow-up finding for the next maintenance report (don't silently swallow)
+  - **Medium against transitive dep, OR no fix available**: note severity count only
+  - **Low**: severity count only, no per-finding action
 
 ## Verification Steps
 - `.venv/bin/pip install -e ".[dev]"` succeeds.
