@@ -1,6 +1,6 @@
 # Leg: 03-run-pip-audit-baseline
 
-**Status**: ready
+**Status**: completed
 **Flight**: [Supply-Chain Hardening](../flight.md)
 
 ## Objective
@@ -20,11 +20,11 @@ Add `pip-audit` to a `dev` optional-dependency group, run a baseline vulnerabili
 - Any high/critical CVEs reported → either resolved (if trivial) or logged as a follow-up finding (defer to next maintenance cycle)
 
 ## Acceptance Criteria
-- [ ] `pyproject.toml` declares `[project.optional-dependencies] dev = ["pip-audit"]` — scoped to pip-audit only, NOT pytest (Flight 04 owns pytest; bundling here would couple flights)
-- [ ] `.venv/bin/pip install -e ".[dev]"` succeeds and installs pip-audit
-- [ ] `.venv/bin/pip-audit` runs without error
-- [ ] Output captured in `../flight-log.md`: severity counts (none / low N / medium N / high N / critical N) and the top 3 findings by severity. Don't paste raw tool output — summarize and reference
-- [ ] **Triage convention applied** (record decision per finding in flight log):
+- [x] `pyproject.toml` declares `[project.optional-dependencies] dev = ["pip-audit"]` — scoped to pip-audit only, NOT pytest (Flight 04 owns pytest; bundling here would couple flights)
+- [x] `.venv/bin/pip install -e ".[dev]"` succeeds and installs pip-audit
+- [x] `.venv/bin/pip-audit` runs without error
+- [x] Output captured in `../flight-log.md`: severity counts (none / low N / medium N / high N / critical N) and the top 3 findings by severity. Don't paste raw tool output — summarize and reference
+- [x] **Triage convention applied** (record decision per finding in flight log):
   - **Critical / High against any dep**: divert — fix in this flight as a 4th leg, OR open a follow-up finding in the next maintenance report. Decide based on whether a fix is available
   - **Medium against direct dep WITH a fix available**: open a follow-up finding for the next maintenance report (don't silently swallow)
   - **Medium against transitive dep, OR no fix available**: note severity count only
@@ -75,9 +75,9 @@ Add `pip-audit` to a `dev` optional-dependency group, run a baseline vulnerabili
 
 ## Post-Completion Checklist
 
-- [ ] All acceptance criteria verified
-- [ ] Baseline summary captured in flight log
-- [ ] Any high/critical CVEs decided on (fix vs. defer)
-- [ ] Update `../flight-log.md`
-- [ ] Set this leg's status to `completed`
-- [ ] Check off in `../flight.md`
+- [x] All acceptance criteria verified
+- [x] Baseline summary captured in flight log
+- [x] Any high/critical CVEs decided on (fix vs. defer)
+- [x] Update `../flight-log.md`
+- [x] Set this leg's status to `completed`
+- [x] Check off in `../flight.md`
