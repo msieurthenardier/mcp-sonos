@@ -47,7 +47,13 @@ Tighten supply-chain trust assumptions. Three legs: pin the default Piper voice'
 ## In-Flight
 
 ### Technical Approach
-Three legs, ordered F8 → F13 → F17. F8 touches `tts.py`; F13 touches `pyproject.toml`; F17 documents results in the maintenance report or the flight log. Independent.
+Three legs, ordered F8 → F13 → F17. F8 touches `tts.py`; F13 touches `pyproject.toml`; F17 also touches `pyproject.toml` (new `optional-dependencies` block) plus an installed-state side effect. F17 should follow F13 because both touch the same file and sequential edits avoid hunk conflicts.
+
+**Commit cadence**: per-leg commits (Flights 01 + 02 convention preserved).
+
+**Agent pattern**: Flight 02 emerged a rule of thumb — split design-review and implementation when a leg can fail in non-obvious runtime ways; consolidate when legs are textually independent and runtime-inert. F8 (touches tts download path with TLS / file-write semantics) warrants separate design-review + implementation agents. F13 (one-line cap edit) and F17 (one config-block add + tool invocation) are consolidate-safe.
+
+**Smoke-test relevance**: F8 affects voice-model download — the cached voice already on disk will not re-trigger the path on next run. To validate, F8's Developer must delete the cached `.onnx` file and re-trigger via `say()` (or call the download function directly with a sandbox cache_dir). F13 + F17 have zero smoke-test impact.
 
 ### Checkpoints
 - [ ] F8: SHA-256 pin in place; manual test by deleting cached voice and re-downloading
@@ -57,10 +63,13 @@ Three legs, ordered F8 → F13 → F17. F8 touches `tts.py`; F13 touches `pyproj
 ### Adaptation Criteria
 
 **Divert if**:
-- pip-audit reports actual high/critical CVEs against direct deps — then add a fifth leg in this flight or open a follow-up.
+- pip-audit reports actual high/critical CVEs against direct deps — then add a fourth leg in this flight or open a follow-up. Decide based on the specific CVE: high-criticality direct-dep finding → fix here; transitive-with-no-fix → log and defer.
+- F8's hash pin doesn't match the locally-installed voice model — investigate before committing the pin. The expected baseline IS the user's cached voice; a mismatch implies either the model has been updated on HuggingFace since first download OR the user has a tampered model. Surface the observed hash and let the operator decide.
+- `smoke_test.py` starts failing in a way different from the known modes (the `say()` coordinator bug AND the SSDP-discovery race documented in Flight 02 debrief) — halt and investigate.
 
 **Acceptable variations**:
 - Hash storage location (could move to a separate JSON file if it grows; one dict is fine for now)
+- Whether to also cap `soco`/`piper-tts`/`pydantic` upper bounds — flight design says no, but the Developer can promote during F13 if they discover a specific concern
 
 ### Legs
 
