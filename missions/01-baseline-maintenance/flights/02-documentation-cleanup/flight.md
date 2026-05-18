@@ -1,6 +1,6 @@
 # Flight: Documentation Cleanup
 
-**Status**: ready
+**Status**: in-flight
 **Mission**: [Baseline Maintenance](../../mission.md)
 
 ## Contributing to Criteria

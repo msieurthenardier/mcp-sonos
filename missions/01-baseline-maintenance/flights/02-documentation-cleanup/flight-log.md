@@ -7,6 +7,19 @@
 
 ---
 
+### Flight Director Notes
+
+**2026-05-18 — Flight start**
+
+- Mission stayed `active` (set during Flight 01 start). Flight flipped: `ready` → `in-flight`.
+- Feature branch: `flight/02-documentation-cleanup` created off `flight/01-correctness-and-capability` (commit `e40ecc0`). Stacks on Flight 01; Flight 02 PR may include or supersede Flight 01 depending on PR #1's merge order.
+- Crew loaded from `.flightops/agent-crews/leg-execution.md` (Developer + Reviewer, both Sonnet; Accessibility Reviewer disabled).
+- Skipping `/leg` invocation per Phase 2a — all 6 legs already designed (4 inherited from scaffold, 2 added during this flight's `/flight` planning). Going straight to design-review-via-Developer per leg.
+- Commit cadence: per-leg commits, matching Flight 01's pattern.
+- No pre-flight smoke baseline run — this is a documentation flight; smoke tests are noise for text-only changes. Leg 06 (HttpUrl alias delete) is the only code change and will run validator smoke as part of acceptance.
+
+---
+
 ## Reconnaissance Report
 
 Verified each scope item against current code at flight planning time (2026-05-18, after Flight 01 landed at `5c2d406`). Source artifacts: [`maintenance/2026-05-18.md`](../../../../maintenance/2026-05-18.md) for F4/F6/F10/F11 and [`flight-debrief.md`](../01-correctness-and-capability/flight-debrief.md) Action Items for the three carry-forwards. Verified by direct file reads and grep.
