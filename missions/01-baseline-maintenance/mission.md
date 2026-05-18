@@ -1,6 +1,6 @@
 # Mission: Baseline Maintenance
 
-**Status**: active
+**Status**: completed
 
 ## Outcome
 Resolve the 14 codebase health items identified in the 2026-05-18 maintenance report. After this mission, mcp-sonos should be free of the real correctness bug, have a properly scoped `play_file` capability, validate `AUDIO_PORT` against the documented firewall range, have its documentation aligned with actual behavior, carry pinned supply-chain hashes, and ship with unit-test scaffolding so the documented "controller is testable" claim is real.
@@ -23,7 +23,7 @@ Full inspection details: [Maintenance Report 2026-05-18](../../maintenance/2026-
 - [x] F4 — `say` tool docstring describes Piper accurately (no gTTS/`lang` lie); `playlists.py:4` module docstring matches the CLAUDE.md speaker-UID keying invariant
 - [x] F5 — `say()` (and any other group-access site) routes through `_group_members_of`
 - [x] F6 — Unused `Iterable` import and dead `threading.Lock` removed from `controller.py`
-- [ ] F7 — Pytest scaffolding exists; `SonosController` construction is deferred from module-level; a `SoCoFake` lets controller and playlists logic be exercised without live hardware; at least the F1 takeover path has a regression test
+- [x] F7 — Pytest scaffolding exists; `SonosController` construction is deferred from module-level; a `SoCoFake` lets controller and playlists logic be exercised without live hardware; at least the F1 takeover path has a regression test
 - [x] F8 — Default Piper voice has a pinned SHA-256 verified on download; non-default voices logged as trust-on-first-use
 - [x] F10 — `poc/debug_play.py` and `CLAUDE.md` no longer contain the real LAN IPs; placeholders match `.env.example`'s `192.168.1.x` convention
 - [x] F11 — README "Architecture" section reflects 32 tools (or removes the count)
@@ -66,4 +66,4 @@ N/A — findings are well-scoped from inspection; execution decisions belong in 
 - [x] Flight 1: [Correctness and Capability Hardening](flights/01-correctness-and-capability/flight.md) — F1, F2, F3, F5, F12, F14
 - [x] Flight 2: [Documentation Cleanup](flights/02-documentation-cleanup/flight.md) — F4, F6, F10, F11 (plus 3 debrief follow-ups bundled into the flight)
 - [x] Flight 3: [Supply-Chain Hardening](flights/03-supply-chain-hardening/flight.md) — F8, F13, F17
-- [ ] Flight 4: [Test Scaffolding](flights/04-test-scaffolding/flight.md) — F7
+- [x] Flight 4: [Test Scaffolding](flights/04-test-scaffolding/flight.md) — F7 (plus 4 carry-forward Action Items from Flight 02/03 debriefs + scope-expanded Leg 05 fixing the smoke-script regression Leg 02 introduced)
