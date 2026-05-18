@@ -58,6 +58,19 @@ Verified each scope item against current code at flight planning time (2026-05-1
 
 ## Leg Progress
 
+**2026-05-18 — Leg 05 (`05-fix-smoke-scripts-after-di-refactor`) landed**
+
+- Mid-flight scope expansion. Closes the smoke-script regression Leg 04 surfaced and logged as a new mission Known Issue. Both smoke scripts now construct a `SonosController` and call `register_tools(mcp, controller)` before opening `Client(mcp)` — restoring the pre-Leg-02 functional shape with the DI factory pattern preserved.
+- **`smoke_test.py`**: added `from mcp_sonos.controller import SonosController` import and extended the existing server import to `from mcp_sonos.server import mcp, register_tools`. Placed `controller = SonosController()` + `register_tools(mcp, controller)` at the top of `async def main()`, immediately before `async with Client(mcp) as client:`. Keeps the construction side-effects (TCP bind, SSDP/SONOS_IPS discovery) scoped to the `main()` execution path, matching `mcp_sonos/server.py::main()`'s own pattern.
+- **`playlist_smoke.py`**: changed `from mcp_sonos.server import mcp, controller` → `from mcp_sonos.server import mcp, register_tools`, added `from mcp_sonos.controller import SonosController`. `controller` construction and `register_tools(mcp, controller)` placed at **module top level** (after the imports, before any function definition) — required because `build_playlist()` references `controller.cache_dir` and `controller.audio.url_for(...)` as free variables; making `controller` a function-local in `main()` would not satisfy those closures. This matches the script's original module-level `controller` shape (just locally constructed instead of imported from `mcp_sonos.server`). Placement is after the SONOS_IPS setdefault block from Leg 01, so discovery uses the deterministic IPs.
+- Verification (all hardware-independent):
+  1. `.venv/bin/python -m py_compile smoke_test.py playlist_smoke.py` — clean.
+  2. `grep -n "register_tools" smoke_test.py playlist_smoke.py` — `smoke_test.py:23` (import), `smoke_test.py:35` (call); `playlist_smoke.py:36` (import), `playlist_smoke.py:40` (call). Both files have the import + the call.
+  3. `grep -n "from mcp_sonos.server import" smoke_test.py playlist_smoke.py` — both files import `mcp, register_tools` only. `controller` is no longer imported from `mcp_sonos.server` (which is the correct shape, since Leg 02 removed the module-level symbol).
+- **Hardware-dependent verification deferred** — `ping -c1 -W1` against all five `192.168.1.51-55` IPs returned UNREACHABLE. Live smoke run of `smoke_test.py` (which would have been the mission's first chance at a green `say()` end-to-end thanks to Leg 04's fix) cannot be performed from this session. The static checks above confirm the import-time `ImportError` and the runtime `Unknown tool: 'list_speakers'` failure modes documented in the mission Known Issue are both addressed; live-hardware confirmation is a post-handoff verification step.
+- Mission Known Issues updated: the "Smoke scripts no longer functional after Leg 02 DI refactor" entry now marked resolved by this leg (resolution note added; the live-hardware verification caveat preserved as a follow-up flag).
+- Leg status: `ready` → `in-flight` → `landed`. Not committed (handoff to reviewer per `/agentic-workflow` Phase 2d).
+
 **2026-05-18 — Leg 04 (`04-investigate-say-coordinator-bug`) landed**
 
 - **Outcome: FIX** (not xfail). Mission Known Issue `say()` coordinator-routing bug resolved. **10 tests pass, 0 fail, 0 xfail** (8 prior + 2 new from this leg).
