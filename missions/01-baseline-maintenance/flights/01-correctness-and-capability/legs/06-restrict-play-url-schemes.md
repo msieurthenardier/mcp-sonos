@@ -34,24 +34,61 @@ Reject non-`http`/`https` URL schemes at the `play_url`, `playlist_add`, and `pl
 
 ## Implementation Guidance
 
-1. **Choose validation site**. Tool-side (Pydantic) is preferred per the Architect — agent sees the error in the MCP response.
+**Defence in depth**: validate at *both* the tool surface (clean MCP error for agents) AND the controller/playlist surface (catches non-MCP callers — future test scaffolding in Flight 4, automation scripts, anything that imports the controller directly). Same validator function reused at both sites.
 
-2. **Create a small validator function** or use a Pydantic `AfterValidator` / regex:
+1. **Create the validator** in `mcp_sonos/_urls.py` (or inline in `controller.py` if you'd rather keep modules light):
    ```python
    from urllib.parse import urlparse
-   def _validate_http_url(u: str) -> str:
+   _ALLOWED_SCHEMES = {"http", "https"}
+   def validate_http_url(u: str) -> str:
        scheme = urlparse(u).scheme.lower()
-       if scheme not in ("http", "https"):
+       if scheme not in _ALLOWED_SCHEMES:
            raise ValueError(f"URL scheme must be http or https; got {scheme!r}")
        return u
    ```
 
-3. **Apply to**:
-   - `play_url` `url` parameter (`server.py`)
-   - `playlist_add` `url` parameter
-   - `playlist_add_many` items — depending on item shape, validate `url` per item
+2. **At the tool surface (`server.py`)** — Pydantic `AfterValidator` so the MCP response carries a clean validation error:
+   ```python
+   from pydantic import AfterValidator
+   from ._urls import validate_http_url
 
-4. **If `playlist_add_many` items are typed via a Pydantic model**, add the validator to that model.
+   HttpUrl = Annotated[str, AfterValidator(validate_http_url)]
+
+   @mcp.tool
+   def play_url(speaker: SpeakerName, url: HttpUrl, ...): ...
+
+   @mcp.tool
+   def playlist_add(name: PlaylistName, url: HttpUrl, ...): ...
+   ```
+   For `playlist_add_many`, the items are `list[dict]` today. Either tighten the item shape with a Pydantic `PlaylistAddItem` model (cleanest) or run the validator inside the tool body before delegating to the controller.
+
+3. **At the controller surface** — same validator, raised as plain `ValueError`:
+   ```python
+   # controller.py
+   from ._urls import validate_http_url
+   def play_url(self, name: str, url: str, title: str | None = None) -> dict:
+       validate_http_url(url)
+       ...
+   ```
+
+4. **At the playlist surface** — `PlaylistManager.add` and `.add_many` in `playlists.py`:
+   ```python
+   def add(self, name: str, url: str, title: Optional[str] = None) -> Playlist:
+       ...
+       url = url.strip()
+       if not url:
+           raise PlaylistError("url is empty")
+       validate_http_url(url)
+       ...
+   def add_many(self, name: str, items: list[dict]) -> Playlist:
+       ...
+       url = str(raw["url"]).strip()
+       if not url:
+           raise PlaylistError(f"items[{i}] has empty url")
+       validate_http_url(url)
+       ...
+   ```
+   In playlists, wrap the `validate_http_url` call in a `try` to convert `ValueError` → `PlaylistError` for consistent error types within the playlist module — or accept `ValueError` is fine. Match the surrounding style.
 
 ## Files Affected
 - `mcp_sonos/server.py` — three tool definitions
