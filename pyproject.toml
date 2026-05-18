@@ -32,7 +32,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pip-audit",
+    "pytest",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [project.scripts]
 mcp-sonos = "mcp_sonos.server:main"
