@@ -58,6 +58,30 @@ Verified each scope item against current code at flight planning time (2026-05-1
 
 ## Leg Progress
 
+**2026-05-18 — Leg 02 (`02-test-scaffolding-and-di-refactor`) landed**
+
+- Load-bearing architectural refactor. DI factory pattern introduced; SoCoFake scaffolding + pytest config landed alongside.
+- **`mcp_sonos/server.py` DI refactor**: removed module-level `controller = SonosController()` (was line 34); kept module-level `mcp = FastMCP(...)` instance with the existing `name="sonos"` and `instructions=...` text byte-identical (diffed against `HEAD` over lines 21-31 — empty diff). All 32 `@mcp.tool`-decorated functions moved inside `def register_tools(mcp: FastMCP, controller: SonosController) -> None:` as closures over the `controller` parameter; signatures, `Annotated[..., Field(...)]` parameter annotations, and docstrings preserved verbatim. `SpeakerName` and `PlaylistName` type aliases stay module-level (controller-independent). `main()` now constructs the controller, calls `register_tools(mcp, controller)`, then `mcp.run()`. FastMCP 3.3.1 accepts late `@mcp.tool` registration with no API friction (no divert path needed — confirmed at design review held).
+- **`mcp_sonos/playlists.py` test-observability hook**: added `self._iteration_event = threading.Event()` to `PlaylistManager.__init__` with the comment `# Test-observability hook — production code never waits on this.`. Added `self._iteration_event.set()` at the TOP of the inner poll loop (line 357, the wait-for-track-end loop — `while not session.stop_event.is_set()`), before the `skip_event` / `back_event` / poll / sleep paths. Placement is intentional per the leg spec: every iteration sets the event, including the break paths (skip, back, takeover) and the `continue` path on poll failure. Production code never reads it.
+- **Test scaffolding**:
+  - `tests/__init__.py` — created empty (package marker).
+  - `tests/conftest.py` — created empty (pre-empts pytest import-discovery edge cases in Leg 03).
+  - `tests/_fakes.py` — created with `SoCoFake` dataclass + `FakeGroup` dataclass, matching the leg's step 3 snippet. Uses string forward references (`"SoCoFake"`) for self-references. **No `import soco`**; the fake is independent of the real SoCo library. Surface: `player_name`, `uid`, `ip_address`, `is_visible()`, `group.coordinator`, `group.members`, `get_current_transport_info()`, `get_current_track_info()`, `play_uri`, `pause`, `stop`, `next`, `previous`, `volume` (property + setter), `mute` (property + setter), `unjoin`, `join`, `add_to_queue`, `clear_queue`. Module docstring originally referenced "no `import soco`" as a phrase; reworded to "this module never imports it" to avoid the literal substring confusing the `grep -n "import soco" tests/_fakes.py` verification step.
+- **`pyproject.toml`**: extended `[project.optional-dependencies] dev` from `["pip-audit"]` to `["pip-audit", "pytest"]` (alphabetical order). Added `[tool.pytest.ini_options]` block with `testpaths = ["tests"]`. `.venv/bin/pip install -e ".[dev]"` succeeded; pytest 9.0.3 + pluggy 1.6.0 + iniconfig 2.3.0 installed alongside existing pip-audit 2.10.0.
+- Verification (all hardware-independent):
+  1. `.venv/bin/python -m py_compile mcp_sonos/server.py mcp_sonos/playlists.py tests/_fakes.py` — clean.
+  2. `grep -n "^controller = SonosController" mcp_sonos/server.py` — zero hits (exit 1).
+  3. `grep -n "def register_tools" mcp_sonos/server.py` — 1 hit at line 46.
+  4. `grep -c "Use 'all' as the target" mcp_sonos/server.py` — returned `0`, **NOT 1 as the verification step predicted**. Cause: the substring straddles a line break in the `instructions=...` literal (line 27 ends `Use 'all' ` and line 28 starts `as the target of \`say\` ...`). The original `HEAD:mcp_sonos/server.py` ALSO returns 0 for this grep — the placement was identical before the refactor, so this is a stable property of the original source layout, not a regression from the refactor. Verbatim preservation was instead confirmed via `diff` of lines 21-31 against `HEAD` (empty diff). Flagging for future improvement to the verification step (e.g. `grep -A 2 ... | grep "as the target"` or a multi-line `pcregrep -M` form).
+  5. `.venv/bin/python -c "import mcp_sonos.server; print('imports clean')"` — printed `imports clean`, exited 0, no port bind, no SSDP discovery, no audio host thread.
+  6. `.venv/bin/python -c "from tests._fakes import SoCoFake; f = SoCoFake(player_name='Test'); print(f.player_name, f.group.coordinator.player_name)"` — printed `Test Test`, exit 0.
+  7. `grep -n "import soco" tests/_fakes.py` — zero hits (exit 1) after the docstring reword.
+  8. `.venv/bin/pytest` — runs, "collected 0 items / no tests ran in 0.00s", exit 0 (expected — tests land in Leg 03).
+  9. `.venv/bin/pip-audit --version` → `2.10.0`; `.venv/bin/pytest --version` → `9.0.3`. Both work.
+  10. Spot-check: `PlaylistManager(...)._iteration_event` is a `threading.Event`, unset on init.
+- **Hardware-dependent verification deferred**: `.venv/bin/python -m mcp_sonos.server` end-to-end start and the smoke scripts (`.venv/bin/python smoke_test.py`, `.venv/bin/python playlist_smoke.py`) require live Sonos hardware. The functional path through `main()` → `SonosController()` → `register_tools(mcp, controller)` → `mcp.run()` is identical in shape to the prior module-level wiring; only the construction order changed.
+- Leg status: `ready` → `in-flight` → `landed`. Not committed (handoff to reviewer per `/agentic-workflow` Phase 2d).
+
 **2026-05-18 — Leg 01 (`01-flight-prereqs`) landed**
 
 - Two bundled cleanups from prior debriefs, both runtime-inert (text/config only).

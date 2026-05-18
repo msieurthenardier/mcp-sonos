@@ -103,6 +103,8 @@ class PlaylistManager:
         self._playlists: dict[str, Playlist] = {}
         self._sessions: dict[str, PlaybackSession] = {}  # speaker_uid -> session
         self._lock = threading.Lock()
+        # Test-observability hook — production code never waits on this.
+        self._iteration_event = threading.Event()
 
     # ---- playlist CRUD -----------------------------------------------------
 
@@ -354,6 +356,7 @@ class PlaylistManager:
                 stopped_reads = 0
                 advance = True
                 while not session.stop_event.is_set():
+                    self._iteration_event.set()
                     if session.skip_event.is_set():
                         session.skip_event.clear()
                         try:
