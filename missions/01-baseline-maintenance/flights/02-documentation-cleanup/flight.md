@@ -94,7 +94,7 @@ Six edits, all text or near-text. None touch runtime behavior except Leg 06 (`Ht
 - [x] `02-remove-dead-lock-and-import` — F6: drop `Iterable` and `_lock` (and `import threading` if newly unused) from `controller.py`
 - [x] `03-anonymize-lan-ips` — F10: replace real IPs with placeholders in `poc/debug_play.py` and `CLAUDE.md`
 - [x] `04-fix-readme-tool-count` — F11: README "19 tools" → "32 tools"
-- [ ] `05-codify-claude-md-patterns` — Flight 01 debrief follow-up: append `_urls.py` defence-in-depth pattern + eager-parse/lazy-validate env-var convention to `## When extending` in `CLAUDE.md`
+- [x] `05-codify-claude-md-patterns` — Flight 01 debrief follow-up: append `_urls.py` defence-in-depth pattern + eager-parse/lazy-validate env-var convention to `## When extending` in `CLAUDE.md`
 - [ ] `06-resolve-httpurl-alias` — Flight 01 debrief follow-up: delete (default) or fully adopt the `HttpUrl` alias in `server.py`
 
 ---

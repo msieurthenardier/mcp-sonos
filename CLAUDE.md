@@ -137,6 +137,25 @@ re-synthesize.
 - POC scripts in `poc/` are historical; they use Piper via a thin
   re-export wrapper. They still run but aren't the primary surface.
 - README's Roadmap section is the punch list for what to harden next.
+- **Cross-cutting input validation (defense-in-depth)** → single validator
+  module, imported at every enforcement surface. Example:
+  `mcp_sonos/_urls.py::validate_http_url` is imported by `server.py`
+  (Pydantic `AfterValidator` at the tool boundary), `controller.py`
+  (defensive check in `play_url`), and `playlists.py` (in `add` and
+  `add_many`, converted to `PlaylistError`). Same policy enforced at every
+  entry surface; agents reading the schema see a clean MCP error, direct
+  callers see a `ValueError`/`PlaylistError`. Future candidates for this
+  pattern: speaker-name normalization, `AUDIO_PORT` range, playlist-name
+  validation.
+- **Env vars that can be invalid (paths, ports, etc.)** → parse eagerly at
+  `SonosController.__init__`, validate lazily at first use. Example:
+  `AUDIO_MEDIA_ROOT` is read once at init and resolved into
+  `self.media_root: Path | None`; the `is_dir()` check + extension
+  allow-list run on every `play_file` call. Rationale: a misconfigured
+  path doesn't crash the MCP server at import time — the other 31 tools
+  keep working, and the affected tool returns a clear error pointing at
+  the env var. Note: this trades startup-fast-fail for graceful
+  degradation; pick accordingly per new env var.
 
 ## Important context
 

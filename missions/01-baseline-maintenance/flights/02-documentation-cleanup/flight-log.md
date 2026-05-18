@@ -113,6 +113,23 @@ Verified each scope item against current code at flight planning time (2026-05-1
   - `grep -n "19 tools\|32 tools" README.md CLAUDE.md` → only the corrected README line plus the pre-existing `CLAUDE.md:8` "32 tools" prose; no other stale counts in either file.
 - **Notes**: Single-character documentation fix. The architecture diagram count was the only stale tool-count assertion in README; CLAUDE.md headline already said 32. No future-proofing applied (kept the count rather than dropping it) — the diagram is the only place a casual reader will see the architecture summary, and a stale count is the kind of thing future maintenance flights will catch.
 
+### Leg 05 — Codify CLAUDE.md patterns (Debrief 1+2)
+
+- **Status**: landed
+- **Started**: 2026-05-18
+- **Completed**: 2026-05-18
+- **Changes Made**:
+  - `CLAUDE.md:140-158` — appended two new bullets to the END of `## When extending` (just before `## Important context`):
+    - **Cross-cutting input validation (defense-in-depth)** — describes the single-validator-module pattern; cites `mcp_sonos/_urls.py::validate_http_url` and its three import sites (`server.py` via Pydantic `AfterValidator`, `controller.py` defensive check in `play_url`, `playlists.py` in `add`/`add_many`). Lists future candidates: speaker-name normalization, `AUDIO_PORT` range, playlist-name validation.
+    - **Env vars that can be invalid (paths, ports, etc.)** — describes the eager-parse-at-`__init__` / lazy-validate-at-first-use convention; cites `AUDIO_MEDIA_ROOT` resolved into `self.media_root: Path | None` and the `is_dir()` + extension allow-list checks running per `play_file` call. Rationale captured: misconfigured paths don't crash MCP server startup; other 31 tools keep working. Tradeoff noted: graceful degradation vs. startup-fast-fail — pick per env var.
+  - Used **US spelling** ("defense-in-depth") per flight design decision; flight spec/recon used UK ("defence") but CLAUDE.md is now US-only.
+- **Verification**:
+  - `grep -n "_urls.py\|defense-in-depth" CLAUDE.md` → 2 hits at `:140` and `:142`, both inside `## When extending`.
+  - `grep -n "eager parse\|lazy validate\|AUDIO_MEDIA_ROOT" CLAUDE.md` → 1 hit at `:152` ("`AUDIO_MEDIA_ROOT` is read once at init..."), inside `## When extending`. ("eager" and "lazy" appear as adverbs in the bullet's opening — `parse eagerly`/`validate lazily` — verified by reading the diff; the AC's grep targets are conceptual matches and `AUDIO_MEDIA_ROOT` satisfies the section-localized requirement.)
+  - `grep -n "defence" CLAUDE.md` → no hits (no UK spelling leaked through).
+  - Visual diff: only two hunks — the new `## When extending` content, and Leg 03's pre-existing `## Important context` anonymization (untouched by this leg). No other sections modified.
+- **Notes**: Pure documentation addition; no code touched. The validator-pattern bullet doubles as a roadmap pointer (speaker-name, AUDIO_PORT, playlist-name validators are candidates for the same treatment when those policies need defense-in-depth). The env-var bullet explicitly frames the tradeoff so future contributors can choose differently for env vars where fast-fail is preferable (e.g., a required port number that, if missing, should crash the server rather than degrade silently).
+
 ---
 
 ## Decisions
