@@ -7,6 +7,37 @@
 
 ---
 
+## Reconnaissance Report
+
+Verified each scope item against current code at flight planning time (2026-05-18, after Flight 01 landed at `5c2d406`). Source artifacts: [`maintenance/2026-05-18.md`](../../../../maintenance/2026-05-18.md) for F4/F6/F10/F11 and [`flight-debrief.md`](../01-correctness-and-capability/flight-debrief.md) Action Items for the three carry-forwards. Verified by direct file reads and grep.
+
+| Item | Classification | Evidence | Recommendation |
+|------|----------------|----------|----------------|
+| F4a — `say` docstring lies about gTTS | `confirmed-live` | `server.py:194` `description="What to say. Plain text; will be synthesized via gTTS."`; `server.py:196` `description="gTTS language code..."` | Rewrite both descriptions to name Piper and mark `lang` as deprecated/ignored. Schema unchanged. |
+| F4b — `playlists.py` module docstring contradicts keying invariant | `confirmed-live` | `playlists.py:4` reads "worker thread keyed by the resolved *coordinator UID*"; actual code at `playlists.py:208` keys by `speaker.uid` per CLAUDE.md invariant | Rewrite docstring to say "speaker UID" and reference CLAUDE.md. Update `:99` inline comment too. |
+| F6 — unused `Iterable` import + dead `_lock` | `confirmed-live` | `controller.py:15` `from typing import Iterable` (Iterable never referenced); `controller.py:12` `import threading`; `controller.py:98` `self._lock = threading.Lock()` (only the assignment — no acquire/release/with elsewhere in the file) | Delete both. If `import threading` becomes unused after removing `_lock`, drop that too. |
+| F10 — real LAN IPs in tracked files | `confirmed-live` | `poc/debug_play.py:24` `TARGET_IP = "192.168.86.53"`; `CLAUDE.md:147` documents `192.168.86.0/24`, host `.38`, speakers `.49`-`.53` | Replace with `192.168.1.x` placeholders matching `.env.example` style. |
+| F11 — README architecture diagram says "19 tools" | `confirmed-live` (line drifted) | `README.md:378` (was `:369` in maintenance report; shifted by Flight 01's README additions) `├── server.py # FastMCP — 19 tools, stdio transport`. `grep -c "@mcp.tool" server.py` = 32. | Change "19 tools" → "32 tools" or drop the count. |
+| Debrief 1 — codify `_urls.py` defence-in-depth pattern in CLAUDE.md | `confirmed-live` (new addition needed) | CLAUDE.md has `## When extending` section (line 126) with bullets on group access, env vars, POC scripts, etc. — but no mention of validators or `_urls.py` despite the new module landing in Flight 01. | Append a bullet to `## When extending` describing the pattern: single validator module, imported at tool + controller + manager surfaces. |
+| Debrief 2 — codify "eager parse, lazy validate" env-var convention in CLAUDE.md | `confirmed-live` (new addition needed) | CLAUDE.md `## When extending` has a "New env vars" bullet (around line 138) that points to README's Configuration table and `.env.example` — but does not describe the parse-at-init / validate-on-use pattern used for `AUDIO_MEDIA_ROOT` in Flight 01. | Extend the existing "New env vars" bullet (or append a new sub-bullet) describing the pattern. |
+| Debrief 3 — `HttpUrl` alias half-adoption in `server.py` | `confirmed-live` | `server.py:47` `HttpUrl = Annotated[str, AfterValidator(validate_http_url)]` — defined but unused. `server.py:85, 245` use inline `AfterValidator(validate_http_url)` instead. | Default: delete the alias (it's dead code). If a clean adoption pattern is found during implementation, adopt fully. |
+
+**No items retired or scoped down — all 8 confirmed-live.** Line numbers refreshed against post-Flight-01 state (`5c2d406`). The `_urls.py` defence-in-depth pattern requires *new* CLAUDE.md content (it didn't exist before Flight 01 landed); the eager-parse/lazy-validate pattern requires extension of an existing bullet.
+
+### Additional Observations (not finding-level — affect flight design)
+
+1. **`## When extending` is the right anchor for both CLAUDE.md additions.** Two of the existing bullets already capture extension-time guidance (group access via helpers, env-var documentation); the new patterns are the same kind of "if you're about to add X, do Y" content. Avoids section sprawl.
+
+2. **F10 and Debrief 1+2 both touch CLAUDE.md** but at different sections — F10 in the `## Important context` user-environment block (line 147), Debrief items in `## When extending` (line 126+). Sequential within a session is fine; parallel would be fine too.
+
+3. **Leg 06 (`HttpUrl` alias) is the only leg with non-zero runtime change** — deleting the alias removes the unused symbol; behavior of the validator at call sites stays the same. Smoke tests should pass before AND after; if they fail differently between Leg 05 (CLAUDE.md edit) and Leg 06 (alias delete), that's signal.
+
+4. **The mission's `say()` Known Issue is out of scope for this flight.** Documentation-only flight; the bug needs a code-side maintenance spike, not a doc fix.
+
+---
+
+---
+
 ## Leg Progress
 
 (Append entries here as legs land.)
