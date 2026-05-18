@@ -93,6 +93,26 @@ Verified each finding against current code at flight planning time (2026-05-18, 
 - Validation lives in `controller.play_file` (per leg spec — keeps `AudioHost` policy-agnostic). `audio.stage()` is still callable directly from Python, but grep confirms `play_file` is the only caller in the repo.
 - The `list_directory` override blocks `GET /` and any directory request but does NOT affect `GET /<filename>` — that's the documented and required behavior for Sonos to fetch audio.
 
+### Leg 03 — F3 validate AUDIO_PORT range
+**Status**: landed
+**Started**: 2026-05-18T13:45:00Z
+**Completed**: 2026-05-18T13:47:00Z
+
+#### Changes Made
+- `mcp_sonos/audio_host.py`: added module-level `_validate_port(p: int) -> int` helper directly below `PORT_RANGE`. Raises `ValueError` when `p` is outside `PORT_RANGE` with a message naming the `8000-8999` range, the firewall rationale, and the remediation (set in-range or update the firewall rule). Returns `p` on the in-range path.
+- `mcp_sonos/audio_host.py`: wired `_validate_port` into both validating branches of `_pick_port` — the `preferred is not None` programmatic path and the `AUDIO_PORT` env path. The auto-pick branch is unchanged: it produces in-range values by construction.
+
+#### Verification
+- `py_compile mcp_sonos/audio_host.py` — clean.
+- `AUDIO_PORT=9999 _pick_port()` → `ValueError` with the expected firewall-aware message; non-zero exit.
+- `_pick_port(8500)` → `8500` (in-range programmatic).
+- `_pick_port(9999)` → `ValueError` (out-of-range programmatic; same message, surfaced via the `preferred` branch).
+- `_pick_port()` with no env → `8000` (auto-pick from a free socket; expected first-free in PORT_RANGE).
+
+#### Notes
+- Live-hardware smoke tests not re-run: F3 is a startup-time validation on a single env-read path. Behavior change is limited to "raises early instead of failing silently mid-playback" for out-of-range values; in-range values traverse identical code to before. No state-machine, playback, or HTTP-handler surface touched.
+- Non-integer `AUDIO_PORT` (e.g. `"abc"`) continues to fail via `int(env)` `ValueError` before `_validate_port` runs — left as-is per leg's "Edge Cases" guidance.
+
 ---
 
 ## Decisions

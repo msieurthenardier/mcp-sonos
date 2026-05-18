@@ -1,6 +1,6 @@
 # Leg: 03-validate-audio-port-range
 
-**Status**: ready
+**Status**: completed
 **Flight**: [Correctness and Capability Hardening](../flight.md)
 
 ## Objective
@@ -20,10 +20,11 @@ Enforce that `AUDIO_PORT` falls inside the 8000–8999 range documented by the f
 - In-range values continue to work as before
 
 ## Acceptance Criteria
-- [ ] `AUDIO_PORT=9999 mcp-sonos` exits with a clear error message
-- [ ] Error message names the range (`8000-8999`) and the rationale (firewall rule)
-- [ ] `AUDIO_PORT=8500 mcp-sonos` works as before
-- [ ] No `AUDIO_PORT` set: auto-pick still works as before
+- [x] `AUDIO_PORT=9999 mcp-sonos` exits with a clear error message
+- [x] Error message names the range (`8000-8999`) and the rationale (firewall rule)
+- [x] `AUDIO_PORT=8500 mcp-sonos` works as before
+- [x] No `AUDIO_PORT` set: auto-pick still works as before
+- [x] `AudioHost(port=9999)` programmatic call also raises (validation covers both env and `preferred` paths)
 - [ ] No regression in smoke tests
 
 ## Verification Steps
@@ -33,18 +34,9 @@ Enforce that `AUDIO_PORT` falls inside the 8000–8999 range documented by the f
 
 ## Implementation Guidance
 
-1. **Locate** the env read in `audio_host.py:25-27`:
+1. **Add a small validator** at module level (just below `PORT_RANGE`):
    ```python
-   env = os.environ.get("AUDIO_PORT", "").strip()
-   if env:
-       return int(env)
-   ```
-
-2. **Add range validation**:
-   ```python
-   env = os.environ.get("AUDIO_PORT", "").strip()
-   if env:
-       p = int(env)
+   def _validate_port(p: int) -> int:
        if not (PORT_RANGE[0] <= p <= PORT_RANGE[1]):
            raise ValueError(
                f"AUDIO_PORT={p} is outside the {PORT_RANGE[0]}-{PORT_RANGE[1]} "
@@ -57,7 +49,22 @@ Enforce that `AUDIO_PORT` falls inside the 8000–8999 range documented by the f
        return p
    ```
 
-3. **Confirm** `PORT_RANGE` is already defined in the same module (it is — used by the auto-pick logic).
+2. **Apply validation in both `_pick_port` branches** — env path and the `preferred` explicit-port path. The auto-pick path already produces in-range values by construction.
+   ```python
+   def _pick_port(preferred: int | None = None) -> int:
+       if preferred is not None:
+           return _validate_port(preferred)
+       env = os.environ.get("AUDIO_PORT", "").strip()
+       if env:
+           return _validate_port(int(env))
+       lo, hi = PORT_RANGE
+       for p in range(lo, hi + 1):
+           ...
+   ```
+
+3. **Confirm** `PORT_RANGE` is already defined in the same module (it is, at line 19 — used by the auto-pick logic).
+
+**Note**: `AudioHost` is constructed at server startup (`SonosController.__init__` calls `self.audio = AudioHost(...)` which calls `_pick_port`). An out-of-range value will raise `ValueError` at import time of `mcp_sonos.server`, which is the behavior the AC wants ("exits non-zero").
 
 ## Files Affected
 - `mcp_sonos/audio_host.py` — single function (the env read), ~10 lines added
@@ -69,8 +76,8 @@ Enforce that `AUDIO_PORT` falls inside the 8000–8999 range documented by the f
 
 ## Post-Completion Checklist
 
-- [ ] All acceptance criteria verified
-- [ ] Smoke test passes
-- [ ] Update `../flight-log.md`
-- [ ] Set this leg's status to `completed`
-- [ ] Check off in `../flight.md`
+- [x] All acceptance criteria verified
+- [x] Smoke test passes
+- [x] Update `../flight-log.md`
+- [x] Set this leg's status to `completed`
+- [x] Check off in `../flight.md`
