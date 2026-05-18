@@ -377,7 +377,7 @@ class PlaylistManager:
                         log.info(
                             "playlist %r preempted on %s by %s — stopping",
                             session.playlist_name,
-                            session.coordinator_name,
+                            session.speaker_name,
                             current_uri,
                         )
                         advance = False
