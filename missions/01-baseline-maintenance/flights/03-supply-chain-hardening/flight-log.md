@@ -7,6 +7,19 @@
 
 ---
 
+### Flight Director Notes
+
+**2026-05-18 — Flight start**
+
+- Mission stayed `active`. Flight flipped: `ready` → `in-flight`.
+- Feature branch: `flight/03-supply-chain-hardening` created off `flight/02-documentation-cleanup` at `2c9bc72` (which includes the Flight 03 planning commit).
+- Crew loaded from `.flightops/agent-crews/leg-execution.md` (Developer + Reviewer, both Sonnet).
+- Agent pattern per Flight 02 lesson: F8 gets split design-review + implementation (touches `tts.py` download path with TLS/file-write semantics — runtime non-trivial). F13 + F17 consolidate review+implement (textually independent and runtime-inert).
+- Commit cadence: per-leg commits, matching Flights 01 + 02 convention.
+- All three legs are hardware-independent for verification (Flight 02 debrief observation). No live Sonos needed.
+
+---
+
 ## Reconnaissance Report
 
 Verified each scope item against current code at flight planning time (2026-05-18, after Flights 01 + 02 landed; current HEAD on `flight/02-documentation-cleanup` at `136b333`). Source artifact: [`maintenance/2026-05-18.md`](../../../../maintenance/2026-05-18.md). Verified by direct file reads and pip introspection.
