@@ -34,6 +34,9 @@ from ._urls import any_mcp_hosted, validate_http_url
 # Must NOT be "-1" — Leg 1 hardware testing confirmed that "-1" causes
 # title metadata to be discarded by the firmware; any other value preserves
 # the title field. "A:TRACKS" is the conventional music-library container.
+# NOTE: Flight 1 hardware finding — parent_id="-1" loses track titles on
+# firmware; any non-"-1" value (e.g. "A:TRACKS") preserves them. Audit
+# any future DidlMusicTrack construction to ensure this invariant holds.
 QUEUE_PARENT_ID = "A:TRACKS"
 
 
@@ -401,6 +404,10 @@ class PlaylistManager:
             sess = self._sessions.get(speaker.uid)
         if sess is None:
             # No worker session — drive the live coordinator directly.
+            # NOTE: SoCoSlaveException is swallowed here with no stale-coord
+            # retry (unlike say(), which retries once after invalidating the
+            # cache). Best-effort: if the coordinator view is stale during
+            # group churn, the advance may be silently lost.
             try:
                 coord.next()
                 track = coord.get_current_track_info()
@@ -426,6 +433,10 @@ class PlaylistManager:
             sess = self._sessions.get(speaker.uid)
         if sess is None:
             # No worker session — drive the live coordinator directly.
+            # NOTE: SoCoSlaveException is swallowed here with no stale-coord
+            # retry (unlike say(), which retries once after invalidating the
+            # cache). Best-effort: if the coordinator view is stale during
+            # group churn, the advance may be silently lost.
             try:
                 coord.previous()
                 track = coord.get_current_track_info()
