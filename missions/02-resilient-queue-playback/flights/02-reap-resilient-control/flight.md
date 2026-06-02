@@ -1,6 +1,6 @@
 # Flight: Reap-Resilient Control Surface
 
-**Status**: landed
+**Status**: completed
 **Mission**: [Resilient Queue-Backed Playback](../../mission.md)
 
 ## Contributing to Criteria
