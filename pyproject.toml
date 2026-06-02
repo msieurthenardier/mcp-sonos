@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mcp-sonos"
-version = "0.1.0"
+dynamic = ["version"]
 description = "MCP server for local Sonos control over WiFi (UPnP via SoCo) with offline TTS announcements via Piper."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -44,6 +44,9 @@ mcp-sonos = "mcp_sonos.server:main"
 [project.urls]
 Homepage = "https://github.com/msieurthenardier/mcp-sonos"
 Issues = "https://github.com/msieurthenardier/mcp-sonos/issues"
+
+[tool.hatch.version]
+path = "mcp_sonos/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["mcp_sonos"]

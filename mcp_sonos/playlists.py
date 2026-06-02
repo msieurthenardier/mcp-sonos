@@ -16,15 +16,25 @@ deliberate — playlists are scratch space for the agent, not a library.
 from __future__ import annotations
 
 import logging
+import os
 import random
 import threading
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Optional
+from urllib.parse import quote, urlparse
 
 from soco import SoCo
+from soco.data_structures import DidlMusicTrack, DidlResource
 
-from ._urls import validate_http_url
+from ._urls import any_mcp_hosted, validate_http_url
+
+
+# Parent ID used for DIDL items loaded into the native Sonos queue.
+# Must NOT be "-1" — Leg 1 hardware testing confirmed that "-1" causes
+# title metadata to be discarded by the firmware; any other value preserves
+# the title field. "A:TRACKS" is the conventional music-library container.
+QUEUE_PARENT_ID = "A:TRACKS"
 
 
 log = logging.getLogger("mcp_sonos.playlists")
@@ -95,11 +105,27 @@ class PlaylistError(ValueError):
 class PlaylistManager:
     """Owns named playlists and at-most-one playback session per coordinator."""
 
-    def __init__(self, resolve_coordinator: Callable[[str], tuple[SoCo, SoCo]]):
+    def __init__(
+        self,
+        resolve_coordinator: Callable[[str], tuple[SoCo, SoCo]],
+        *,
+        host_ip: str = "",
+        audio_port: int = 0,
+    ):
         """`resolve_coordinator(name) -> (named_speaker, coordinator)` is
         injected so tests / future refactors don't pull in the whole
-        SonosController."""
+        SonosController.
+
+        `host_ip` and `audio_port` are the MCP in-process audio server's
+        coordinates, used by `play()` to classify URLs and decide whether to
+        use the native Sonos queue path or the worker-thread engine.  When both
+        are zero/empty the classification falls back to the worker engine for
+        everything (safe default; the production controller always supplies
+        real values).
+        """
         self._resolve_coordinator = resolve_coordinator
+        self._host_ip = host_ip
+        self._audio_port = audio_port
         self._playlists: dict[str, Playlist] = {}
         self._sessions: dict[str, PlaybackSession] = {}  # speaker_uid -> session
         self._lock = threading.Lock()
@@ -207,6 +233,34 @@ class PlaylistManager:
                 f"start_index {start_index} out of range (0..{len(pl.items) - 1})"
             )
 
+        # Route: classify URLs only when we have a known host/port.
+        # - any MCP-hosted URL → worker engine (audio server must stay reachable)
+        # - all-external       → native Sonos queue (survives MCP restarts)
+        # - no host/port       → worker engine (safe conservative fallback;
+        #                        can't classify without coordinates)
+        urls = [item.url for item in pl.items]
+        if not self._host_ip or not self._audio_port:
+            # Classification not possible — use worker engine.
+            return self._play_via_worker(speaker, pl, playlist_name, shuffle, start_index)
+
+        if any_mcp_hosted(urls, self._host_ip, self._audio_port):
+            log.debug(
+                "playlist %r: MCP-hosted URL detected — using worker engine",
+                playlist_name,
+            )
+            return self._play_via_worker(speaker, pl, playlist_name, shuffle, start_index)
+
+        return self._play_via_queue(speaker, pl, playlist_name, shuffle, start_index)
+
+    def _play_via_worker(
+        self,
+        speaker: SoCo,
+        pl: "Playlist",
+        playlist_name: str,
+        shuffle: bool,
+        start_index: int,
+    ) -> dict:
+        """Worker-thread engine path (unchanged behavior — MCP-hosted fallback)."""
         with self._lock:
             # Stop any pre-existing session on this speaker.
             prev = self._sessions.get(speaker.uid)
@@ -253,15 +307,116 @@ class PlaylistManager:
             "start_index": start_index,
             "shuffle": shuffle,
             "first_item": first_item.to_dict(),
+            "engine": "worker",
+        }
+
+    def _play_via_queue(
+        self,
+        speaker: SoCo,
+        pl: "Playlist",
+        playlist_name: str,
+        shuffle: bool,
+        start_index: int,
+    ) -> dict:
+        """Native Sonos queue engine path for all-external playlists.
+
+        DD-D: evict any live worker session as ONE unit — signal_stop +
+        coord.stop() + join to completion — BEFORE touching the queue.
+        """
+        _, coord = self._resolve_coordinator(speaker.player_name)
+
+        with self._lock:
+            prev = self._sessions.get(speaker.uid)
+
+        # DD-D: eviction must complete before any queue operation.
+        if prev:
+            self._signal_stop(prev)
+            try:
+                coord.stop()
+            except Exception:
+                pass
+            if prev.thread:
+                prev.thread.join(timeout=2.0)
+
+        # Build DIDL items per the Leg 1 recipe + DD-E.
+        items = []
+        for i, item in enumerate(pl.items):
+            # Title: use the playlist item's title; fall back to the filename
+            # derived from the URL when the title field is empty.
+            title = item.title
+            if not title:
+                path = urlparse(item.url).path
+                title = os.path.basename(path) or f"track-{i + 1}"
+
+            # URL-encode the URI as required by DidlResource (RFC 3986).
+            encoded_uri = quote(item.url, safe=":/?=&#@+%")
+
+            resource = DidlResource(
+                uri=encoded_uri,
+                protocol_info="http-get:*:audio/mpeg:*",
+            )
+            didl_item = DidlMusicTrack(
+                title=title,
+                parent_id=QUEUE_PARENT_ID,  # DD-E: must NOT be "-1"
+                item_id=f"track-{i}",
+                resources=[resource],
+            )
+            items.append(didl_item)
+
+        coord.clear_queue()
+        coord.add_multiple_to_queue(items)
+
+        # DD-B: SHUFFLE_NOREPEAT intentional — one pass, like worker path.
+        # SoCo's "SHUFFLE" mode implies repeat=True (loops forever); we want
+        # a single pass through the shuffled order, so SHUFFLE_NOREPEAT is
+        # the correct constant here.
+        coord.play_mode = "SHUFFLE_NOREPEAT" if shuffle else "NORMAL"
+
+        self._play_from_queue_with_stale_coord_retry(
+            speaker.player_name, coord, start_index
+        )
+
+        first_item = pl.items[start_index]
+        return {
+            "started": True,
+            "playlist": playlist_name,
+            "speaker": speaker.player_name,
+            "total_items": len(pl.items),
+            "start_index": start_index,
+            "shuffle": shuffle,
+            "first_item": first_item.to_dict(),
+            "engine": "native_queue",  # DD-C: so Flight 2 can detect engine type
         }
 
     def next_track(self, speaker_name: str) -> dict:
-        sess = self._session_for(speaker_name)
+        speaker, _ = self._resolve_coordinator(speaker_name)
+        with self._lock:
+            sess = self._sessions.get(speaker.uid)
+        if sess is None:
+            # No worker session — speaker may be on the native queue engine.
+            # Graceful response so callers don't crash; full queue control
+            # is Flight 2.
+            return {
+                "controllable": False,
+                "engine": "native_queue",
+                "speaker": speaker.player_name,
+            }
         sess.skip_event.set()
         return {"signaled": "next", **sess.to_dict()}
 
     def previous_track(self, speaker_name: str) -> dict:
-        sess = self._session_for(speaker_name)
+        speaker, _ = self._resolve_coordinator(speaker_name)
+        with self._lock:
+            sess = self._sessions.get(speaker.uid)
+        if sess is None:
+            # No worker session — speaker may be on the native queue engine.
+            # Graceful response so callers don't crash; full queue control
+            # is Flight 2.
+            return {
+                "controllable": False,
+                "engine": "native_queue",
+                "speaker": speaker.player_name,
+            }
         sess.back_event.set()
         return {"signaled": "previous", **sess.to_dict()}
 
@@ -427,6 +582,30 @@ class PlaylistManager:
                     self._sessions.pop(session.speaker_uid, None)
 
     # ---- internal ----------------------------------------------------------
+
+    def _play_from_queue_with_stale_coord_retry(
+        self, name: str, coord: SoCo, index: int
+    ) -> SoCo:
+        """Call `coord.play_from_queue(index)`, recovering once from a stale
+        coordinator view (DD-A).
+
+        Mirrors `SonosController._play_uri_with_stale_coord_retry` but calls
+        `play_from_queue` instead of `play_uri`. The stale-coord symptom was
+        not observed during Leg 1 hardware testing, but the precautionary wrap
+        is cheap insurance given the retry pattern is already established.
+        Returns the coordinator that succeeded so callers can keep using it.
+        """
+        from soco.exceptions import SoCoSlaveException
+
+        try:
+            coord.play_from_queue(index)
+            return coord
+        except SoCoSlaveException:
+            # Invalidate the speakers cache by re-resolving; the fresh
+            # coordinator is the one the firmware currently reports.
+            _, fresh_coord = self._resolve_coordinator(name)
+            fresh_coord.play_from_queue(index)
+            return fresh_coord
 
     def _validate_name(self, name: str) -> str:
         n = (name or "").strip()

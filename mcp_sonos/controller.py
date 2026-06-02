@@ -95,7 +95,11 @@ class SonosController:
         self.media_root: Path | None = Path(_mr).expanduser().resolve() if _mr else None
         self._speakers: list[SoCo] = []
         self._speakers_ts: float = 0.0
-        self.playlists = PlaylistManager(resolve_coordinator=self._resolve_coordinator)
+        self.playlists = PlaylistManager(
+            resolve_coordinator=self._resolve_coordinator,
+            host_ip=self._host_ip,
+            audio_port=self.audio.port,
+        )
 
     # ---- discovery / lookup -------------------------------------------------
 

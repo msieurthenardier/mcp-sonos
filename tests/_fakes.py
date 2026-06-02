@@ -30,6 +30,12 @@ class SoCoFake:
     _track: dict = field(default_factory=lambda: {"uri": "", "title": ""})
     _volume: int = 40
     _mute: bool = False
+    _queue: list = field(default_factory=list)
+    _play_mode: str = "NORMAL"
+    # Real SoCo's add_multiple_to_queue / play_from_queue / clear_queue are
+    # decorated with @only_on_master.  Mark the fake as a coordinator so tests
+    # that go through those paths don't need to separately stub the guard.
+    is_coordinator: bool = True
 
     def __post_init__(self) -> None:
         self.group = FakeGroup(coordinator=self, members=[self])
@@ -90,4 +96,30 @@ class SoCoFake:
         return 1
 
     def clear_queue(self) -> None:
-        pass
+        self._queue.clear()
+
+    def add_multiple_to_queue(self, items: list) -> None:
+        """Append DIDL items to the fake queue. Returns None like real SoCo."""
+        self._queue.extend(items)
+        return None
+
+    def play_from_queue(self, index: int = 0) -> None:
+        """Simulate starting playback from queue position `index`."""
+        self._transport = {"current_transport_state": "PLAYING"}
+        if 0 <= index < len(self._queue):
+            item = self._queue[index]
+            # DidlMusicTrack exposes .title; fall back gracefully in tests.
+            title = getattr(item, "title", "")
+            self._track = {"uri": "", "title": title}
+
+    @property
+    def queue_size(self) -> int:
+        return len(self._queue)
+
+    @property
+    def play_mode(self) -> str:
+        return self._play_mode
+
+    @play_mode.setter
+    def play_mode(self, value: str) -> None:
+        self._play_mode = value
