@@ -1,6 +1,6 @@
 # Flight: Reap-Resilient Control Surface
 
-**Status**: in-flight
+**Status**: landed
 **Mission**: [Resilient Queue-Backed Playback](../../mission.md)
 
 ## Contributing to Criteria
@@ -159,8 +159,8 @@ unreliable `title`).
    `say("all")` group limitation, and grouping (decision-level; README prose is Flight 3). (Q6)
 5. `verify-integration` *(completed)* — pytest (63 tests) + manual HAT: Q4 reap+respawn
    control and Q6 say-resume (mid-track) both verified on hardware.
-6. `hat-alignment` *(optional)* — guided live-hardware session for the full
-   reap+respawn + takeover-resume flow.
+6. `hat-alignment` *(optional — not run)* — the Leg 5 HAT already exercised the full
+   reap+respawn + say-resume (mid-track) flow; operator satisfied, guided session not needed.
 
 ## Verification
 - **Automated (local pytest, mocked SoCo)**: live-state control surface (status/next/
