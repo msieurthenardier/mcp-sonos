@@ -1,6 +1,6 @@
 # Mission: Resilient Queue-Backed Playback
 
-**Status**: active
+**Status**: completed
 
 ## Outcome
 A multi-track playlist of externally-hosted HTTP MP3s, once started, keeps
