@@ -1,6 +1,6 @@
 # Flight: Native Queue Playback Path
 
-**Status**: in-flight
+**Status**: landed
 **Mission**: [Resilient Queue-Backed Playback](../../mission.md)
 
 ## Contributing to Criteria
@@ -154,8 +154,8 @@ start and its `coord.stop()` can land on top of the just-started native queue.
 4. `verify-integration` *(automated portion completed)* — Local pytest for
    classifier/routing/fallback/eviction green (38 tests); `queue_smoke.py` added.
    Manual HAT smoke (kill MCP, watch advance) for Q1/Q2 remains operator-run.
-5. `hat-alignment` *(optional)* — Guided live-hardware session: walk through
-   the queue path together, fix issues as they surface until satisfied.
+5. `hat-alignment` *(optional — not run)* — Operator satisfied after the Q1 reap
+   HAT; the guided session was not needed.
 
 ## Verification
 - **Automated (local pytest, mocked SoCo)**: classifier, queue-vs-worker

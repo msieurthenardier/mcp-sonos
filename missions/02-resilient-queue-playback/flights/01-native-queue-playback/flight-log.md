@@ -141,6 +141,25 @@ ordering. Avoid the single `add_to_queue` path (it overrode the title to filenam
 
 ---
 
+## Manual HAT — Q1 reap test (shipped code path)
+
+**Status**: PASS — playback-survival AND native advancement confirmed by operator
+(track 1 → track 2 occurred with the MCP process already dead).
+
+Ran the real code path (`playlist_play` → `_play_via_queue`) via the in-process
+FastMCP client against the live Kitchen/Patio group, using real saidthegramophone
+blog MP3 links (gramotunes.com) with literal spaces in the URL, then exited the
+process WITHOUT cleanup (the exit = the reap).
+
+- `playlist_play` returned `engine: "native_queue"`, `total_items: 2`, `started: true`.
+- URL encoding verified on a real spaced URL: `…/01%20Anna%20von%20Hausswolff%20-%20Stardust.mp3`
+  — encoded once to `%20`, no double-encoding (Leg-3 fix #4 holds on the real path).
+- now_playing: `PLAYING`, coordinator Patio; artist/album populated from the file's
+  ID3 tags ("Anna von Hausswolff" / "ICONOCLASTS"); now-playing `title` blank
+  (title-stickiness nuance — non-blocking, follow-up).
+- **Operator confirmed the speaker kept playing after the MCP process exited** —
+  Q1 (survive-reaping) proven on the shipped code, not just the Leg-1 raw spike.
+
 ## Decisions
 
 _None yet._
