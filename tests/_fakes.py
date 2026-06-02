@@ -27,7 +27,17 @@ class SoCoFake:
     uid: str = "RINCON_FAKE000000000"
     ip_address: str = "192.168.1.50"
     _transport: dict = field(default_factory=lambda: {"current_transport_state": "STOPPED"})
-    _track: dict = field(default_factory=lambda: {"uri": "", "title": ""})
+    _track: dict = field(
+        default_factory=lambda: {
+            "uri": "",
+            "title": "",
+            "artist": "",
+            "album": "",
+            "position": "0:00:00",
+            "duration": "0:00:00",
+            "playlist_position": "0",
+        }
+    )
     _volume: int = 40
     _mute: bool = False
     _queue: list = field(default_factory=list)
@@ -36,6 +46,22 @@ class SoCoFake:
     # decorated with @only_on_master.  Mark the fake as a coordinator so tests
     # that go through those paths don't need to separately stub the guard.
     is_coordinator: bool = True
+    # Call-recording counters for transport commands.
+    next_call_count: int = field(default=0)
+    previous_call_count: int = field(default=0)
+    stop_call_count: int = field(default=0)
+    # Ordered call log for sequencing assertions (e.g. play_mode before play_from_queue).
+    # Each entry is a string token such as "play_mode" or "play_from_queue".
+    call_log: list = field(default_factory=list)
+    # Controls for error injection: if play_from_queue_raise is set, play_from_queue
+    # raises that exception on the first call only, then succeeds subsequently.
+    play_from_queue_raise: "Exception | None" = field(default=None)
+    # Last index passed to play_from_queue — lets tests assert the resume index.
+    play_from_queue_last_index: "int | None" = field(default=None)
+    # Controls for error injection: if seek_raise is set, seek raises that exception.
+    seek_raise: "Exception | None" = field(default=None)
+    # Last timestamp passed to seek — lets tests assert the seek position.
+    seek_last: "str | None" = field(default=None)
 
     def __post_init__(self) -> None:
         self.group = FakeGroup(coordinator=self, members=[self])
@@ -50,20 +76,25 @@ class SoCoFake:
         return dict(self._track)
 
     def play_uri(self, uri: str, title: Optional[str] = None, force_radio: bool = False) -> None:
-        self._track = {"uri": uri, "title": title or ""}
+        # MERGE into _track rather than replacing it: preserves playlist_position,
+        # artist, album, etc. so snapshot tests can read these fields after a
+        # play_uri call (e.g. _with_queue_resume reads playlist_position from
+        # get_current_track_info() which returns a copy of _track).
+        self._track = {**self._track, "uri": uri, "title": title or ""}
         self._transport = {"current_transport_state": "PLAYING"}
 
     def pause(self) -> None:
         self._transport = {"current_transport_state": "PAUSED_PLAYBACK"}
 
     def stop(self) -> None:
+        self.stop_call_count += 1
         self._transport = {"current_transport_state": "STOPPED"}
 
     def next(self) -> None:
-        pass
+        self.next_call_count += 1
 
     def previous(self) -> None:
-        pass
+        self.previous_call_count += 1
 
     @property
     def volume(self) -> int:
@@ -80,6 +111,11 @@ class SoCoFake:
     @mute.setter
     def mute(self, v: bool) -> None:
         self._mute = bool(v)
+
+    def partymode(self) -> None:
+        # No-op for tests that exercise the _say_all path; group modelling
+        # is not needed for queue-resume assertions.
+        pass
 
     def unjoin(self) -> None:
         # Fake doesn't model multi-group state — just refresh group-of-one.
@@ -104,13 +140,36 @@ class SoCoFake:
         return None
 
     def play_from_queue(self, index: int = 0) -> None:
-        """Simulate starting playback from queue position `index`."""
+        """Simulate starting playback from queue position `index`.
+
+        If `play_from_queue_raise` is set, raises that exception on the first
+        call and clears the flag so subsequent calls succeed.
+        """
+        self.call_log.append("play_from_queue")
+        self.play_from_queue_last_index = index
+        if self.play_from_queue_raise is not None:
+            exc = self.play_from_queue_raise
+            self.play_from_queue_raise = None
+            raise exc
         self._transport = {"current_transport_state": "PLAYING"}
         if 0 <= index < len(self._queue):
             item = self._queue[index]
             # DidlMusicTrack exposes .title; fall back gracefully in tests.
             title = getattr(item, "title", "")
             self._track = {"uri": "", "title": title}
+
+    def seek(self, timestamp: str) -> None:
+        """Simulate seeking to `timestamp` (e.g. "0:01:30").
+
+        Records the last seek value so tests can assert it.  If `seek_raise`
+        is set, raises that exception instead (simulates a host that rejects
+        HTTP range requests).
+        """
+        self.seek_last = timestamp
+        if self.seek_raise is not None:
+            exc = self.seek_raise
+            self.seek_raise = None
+            raise exc
 
     @property
     def queue_size(self) -> int:
@@ -123,3 +182,4 @@ class SoCoFake:
     @play_mode.setter
     def play_mode(self, value: str) -> None:
         self._play_mode = value
+        self.call_log.append("play_mode")

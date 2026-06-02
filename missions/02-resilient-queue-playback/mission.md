@@ -138,12 +138,10 @@ agentic host that reaps the MCP on inactivity. No external users.
   stale-coordinator retry handling.
 
 ## Known Issues
-- [ ] Interim contract gap (Flight 1 → resolved by Flight 2): after a queue-backed
-  `playlist_play`, `playlist_stop`/`playlist_status` return `{"running": false}` while
-  the speaker is audibly playing, and `playlist_stop` does not actually stop the queue
-  (no `_sessions` entry). The tool contract misrepresents live state until Flight 2
-  ships the reap-resilient control surface. Discovered in Flight 1; affects any agent
-  using those tools on queue-backed playback in the interim.
+- [x] Interim contract gap (Flight 1 → **resolved by Flight 2**): after a queue-backed
+  `playlist_play`, `playlist_stop`/`playlist_status` returned `{"running": false}` while
+  the speaker was audibly playing. Flight 2's stateless control surface now drives live
+  coordinator state (status/next/previous/stop), verified on hardware via reap+respawn HAT.
 
 ## Flights
 
@@ -154,8 +152,9 @@ agentic host that reaps the MCP on inactivity. No external users.
   MCP-hosted), queue-backed `playlist_play` with titles + native `play_mode`,
   worker-thread fallback, and the `add_multiple_to_queue` metadata checkpoint
   — **completed** (Q1/Q2/Q3/Q5 + Q6-partial; Q1 reap proven on hardware; debriefed)
-- [ ] Flight 2: Reap-resilient control surface — stateless
+- [x] Flight 2: Reap-resilient control surface — stateless
   `playlist_status`/`next`/`previous`/`stop` against live speaker state, plus
   `say`/`play_url` takeover and grouping semantics
+  — **landed** (Q4 + Q6; reap+respawn control & say-resume mid-track proven on hardware)
 - [ ] Flight 3: Documentation + smoke coverage — README/CLAUDE.md/system
   prompt alignment and a queue-path smoke test

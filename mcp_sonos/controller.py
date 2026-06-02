@@ -11,6 +11,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
+from typing import Callable
 
 from soco import SoCo
 
@@ -25,6 +26,14 @@ from .tts import synthesize
 # polling. Piper at the default rate is ~150 wpm, so even long messages
 # finish well within this.
 TTS_TIMEOUT_SECONDS = 30
+
+# Maximum time play_url() will block waiting for a clip to finish before
+# giving up and (best-effort) resuming the queue.  Generous default covers
+# most long-form content; live streams that never stop simply won't auto-
+# resume after this cap (best-effort, swallowed).  Override via env var.
+PLAY_URL_RESUME_TIMEOUT_SECONDS = int(
+    os.environ.get("PLAY_URL_RESUME_TIMEOUT_SECONDS", "3600")
+)
 
 
 def _track_state(speaker: SoCo) -> dict:
@@ -99,6 +108,7 @@ class SonosController:
             resolve_coordinator=self._resolve_coordinator,
             host_ip=self._host_ip,
             audio_port=self.audio.port,
+            invalidate_speakers_cache=lambda: setattr(self, "_speakers_ts", 0.0),
         )
 
     # ---- discovery / lookup -------------------------------------------------
@@ -158,12 +168,31 @@ class SonosController:
     # ---- transport ----------------------------------------------------------
 
     def play_url(self, name: str, url: str, title: str | None = None) -> dict:
-        """Play any HTTP URL on the speaker's group coordinator."""
+        """Play any HTTP URL on the speaker's group coordinator.
+
+        Blocking contract (changed in Leg 4): this method now BLOCKS until
+        the clip finishes (or PLAY_URL_RESUME_TIMEOUT_SECONDS elapses), then
+        attempts to resume a native-queue session that was active before the
+        clip started.  If the queue was playing, playback resumes at the
+        start of the interrupted track; return value reflects the post-resume
+        state (queue track, not the clip).
+
+        Resume is best-effort: if the coordinator becomes unreachable while
+        the clip is playing (e.g. MCP is reaped and restarted), the clip
+        still plays but the queue resume is silently skipped.
+
+        play_file() inherits this behaviour because it calls play_url().
+        """
         # Defence in depth: the MCP tool surface already validates, but
         # direct/test callers reach this method without that gate.
         validate_http_url(url)
         s, coord = self._resolve_coordinator(name)
-        coord.play_uri(url, title=title or "MCP playback")
+        self._with_queue_resume(
+            coord,
+            s.uid,  # keyed on the NAMED speaker's UID, matching _sessions
+            lambda: coord.play_uri(url, title=title or "MCP playback"),
+            timeout=PLAY_URL_RESUME_TIMEOUT_SECONDS,
+        )
         return {
             "requested": s.player_name,
             "played_on_coordinator": coord.player_name,
@@ -326,10 +355,23 @@ class SonosController:
             members = [self._resolve(n) for n in member_names]
             for m in members:
                 m.volume = volume
-        coord = self._play_uri_with_stale_coord_retry(
-            target, coord, url, title=f"Say: {text[:40]}"
+
+        # Capture a mutable reference so the lambda below can re-assign it
+        # when a stale-coordinator retry returns a fresh coord.
+        coord_holder: list[SoCo] = [coord]
+
+        def _play_clip() -> None:
+            coord_holder[0] = self._play_uri_with_stale_coord_retry(
+                target, coord_holder[0], url, title=f"Say: {text[:40]}"
+            )
+
+        self._with_queue_resume(
+            coord_holder[0],
+            s.uid,  # keyed on the NAMED speaker's UID, matching _sessions
+            _play_clip,
+            timeout=TTS_TIMEOUT_SECONDS,
         )
-        self._wait_until_stopped(coord)
+        coord = coord_holder[0]
         return {
             "spoken_on": coord.player_name,
             "group_members": _group_members_of(coord),
@@ -363,6 +405,85 @@ class SonosController:
             _, fresh_coord = self._resolve_coordinator(name)
             fresh_coord.play_uri(url, title=title)
             return fresh_coord
+
+    def _with_queue_resume(
+        self,
+        coord: SoCo,
+        speaker_uid: str,
+        run_clip: Callable[[], None],
+        *,
+        timeout: float,
+    ) -> None:
+        """Snapshot the native queue state, run a clip, then resume playback.
+
+        Snapshot is taken ONLY when all four conditions hold:
+          1. No active worker session for `speaker_uid` (worker owns its lifecycle).
+          2. coord.queue_size > 0  (there is a queue to resume).
+          3. Transport state is PLAYING (something was actually playing).
+          4. int(playlist_position) > 0  (position is meaningful; "0" means no
+             track is selected in the queue).
+
+        If any condition fails, run_clip() is still called but no resume is
+        attempted afterwards.
+
+        Resume (play_from_queue + play_mode restore) is best-effort: any
+        exception is swallowed so a failed restore never surfaces to the caller.
+
+        Limitations documented at the design level:
+        - say("all") / _say_all: group is dissolved before the clip; no resume
+          attempted (caller does not go through _with_queue_resume at all).
+        - Grouping: resume targets the coordinator at snapshot time; if
+          grouping changed while the clip played the resume may land on a
+          different device.  Best-effort.
+        - MCP reaped mid-clip (long play_url): resume is lost; best-effort.
+        """
+        snapshotted = False
+        saved_index: int = 0
+        saved_play_mode: str = "NORMAL"
+        saved_position: str | None = None
+
+        # --- snapshot phase ---
+        if not self.playlists.has_active_session(speaker_uid):
+            try:
+                queue_size = coord.queue_size
+                transport_info = coord.get_current_transport_info()
+                track_info = coord.get_current_track_info()
+                state = transport_info.get("current_transport_state")
+                playlist_pos_str = track_info.get("playlist_position", "0")
+                playlist_pos = int(playlist_pos_str)
+            except Exception:
+                queue_size = 0
+                state = "STOPPED"
+                playlist_pos = 0
+                track_info = {}
+
+            if queue_size > 0 and state == "PLAYING" and playlist_pos > 0:
+                saved_index = playlist_pos - 1  # 1-based → 0-based
+                saved_play_mode = coord.play_mode
+                saved_position = track_info.get("position")
+                snapshotted = True
+
+        # --- clip phase ---
+        run_clip()
+
+        # --- wait phase ---
+        self._wait_until_stopped(coord, timeout=timeout)
+
+        # --- resume phase (best-effort) ---
+        if snapshotted:
+            try:
+                coord.play_from_queue(saved_index)
+                # Mid-track resume: seek to the position captured at snapshot time.
+                # Wrapped in its own try/except so hosts without HTTP range support
+                # fall back to start-of-track silently (best-effort).
+                if saved_position and saved_position not in (None, "0:00:00"):
+                    try:
+                        coord.seek(saved_position)
+                    except Exception:
+                        pass  # start-of-track fallback: swallow seek failures
+                coord.play_mode = saved_play_mode
+            except Exception:
+                pass  # best-effort: swallow resume failures
 
     def _say_all(self, text: str, url: str, volume: int | None) -> dict:
         # Dissolve, partymode, play, dissolve.

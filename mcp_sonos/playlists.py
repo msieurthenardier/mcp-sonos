@@ -111,6 +111,7 @@ class PlaylistManager:
         *,
         host_ip: str = "",
         audio_port: int = 0,
+        invalidate_speakers_cache: Callable[[], None] = lambda: None,
     ):
         """`resolve_coordinator(name) -> (named_speaker, coordinator)` is
         injected so tests / future refactors don't pull in the whole
@@ -122,10 +123,16 @@ class PlaylistManager:
         are zero/empty the classification falls back to the worker engine for
         everything (safe default; the production controller always supplies
         real values).
+
+        `invalidate_speakers_cache` is called before re-resolving the
+        coordinator on a SoCoSlaveException retry, ensuring the cache TTL is
+        bypassed and a fresh discovery is forced.  Defaults to a no-op so
+        existing direct constructions and tests don't break.
         """
         self._resolve_coordinator = resolve_coordinator
         self._host_ip = host_ip
         self._audio_port = audio_port
+        self._invalidate_speakers_cache = invalidate_speakers_cache
         self._playlists: dict[str, Playlist] = {}
         self._sessions: dict[str, PlaybackSession] = {}  # speaker_uid -> session
         self._lock = threading.Lock()
@@ -389,57 +396,104 @@ class PlaylistManager:
         }
 
     def next_track(self, speaker_name: str) -> dict:
-        speaker, _ = self._resolve_coordinator(speaker_name)
+        speaker, coord = self._resolve_coordinator(speaker_name)
         with self._lock:
             sess = self._sessions.get(speaker.uid)
         if sess is None:
-            # No worker session — speaker may be on the native queue engine.
-            # Graceful response so callers don't crash; full queue control
-            # is Flight 2.
+            # No worker session — drive the live coordinator directly.
+            try:
+                coord.next()
+                track = coord.get_current_track_info()
+            except Exception:
+                track = {}
             return {
-                "controllable": False,
                 "engine": "native_queue",
                 "speaker": speaker.player_name,
+                "title": track.get("title", ""),
+                "artist": track.get("artist", ""),
+                "album": track.get("album", ""),
+                "position": track.get("position", ""),
+                "duration": track.get("duration", ""),
+                "uri": track.get("uri", ""),
+                "playlist_position": track.get("playlist_position", ""),
             }
         sess.skip_event.set()
-        return {"signaled": "next", **sess.to_dict()}
+        return {"engine": "worker", "signaled": "next", **sess.to_dict()}
 
     def previous_track(self, speaker_name: str) -> dict:
-        speaker, _ = self._resolve_coordinator(speaker_name)
+        speaker, coord = self._resolve_coordinator(speaker_name)
         with self._lock:
             sess = self._sessions.get(speaker.uid)
         if sess is None:
-            # No worker session — speaker may be on the native queue engine.
-            # Graceful response so callers don't crash; full queue control
-            # is Flight 2.
+            # No worker session — drive the live coordinator directly.
+            try:
+                coord.previous()
+                track = coord.get_current_track_info()
+            except Exception:
+                track = {}
             return {
-                "controllable": False,
                 "engine": "native_queue",
                 "speaker": speaker.player_name,
+                "title": track.get("title", ""),
+                "artist": track.get("artist", ""),
+                "album": track.get("album", ""),
+                "position": track.get("position", ""),
+                "duration": track.get("duration", ""),
+                "uri": track.get("uri", ""),
+                "playlist_position": track.get("playlist_position", ""),
             }
         sess.back_event.set()
-        return {"signaled": "previous", **sess.to_dict()}
+        return {"engine": "worker", "signaled": "previous", **sess.to_dict()}
 
     def stop(self, speaker_name: str) -> dict:
         speaker, coord = self._resolve_coordinator(speaker_name)
         with self._lock:
             sess = self._sessions.get(speaker.uid)
         if not sess:
-            return {"running": False, "speaker": speaker.player_name}
+            # No worker session — stop the live coordinator; do NOT clear the queue.
+            try:
+                coord.stop()
+            except Exception:
+                pass
+            return {
+                "stopped": True,
+                "engine": "native_queue",
+                "speaker": speaker.player_name,
+            }
         self._signal_stop(sess)
         try:
             coord.stop()
         except Exception:
             pass
-        return {"stopped": True, **sess.to_dict()}
+        return {"engine": "worker", "stopped": True, **sess.to_dict()}
 
     def status(self, speaker_name: str) -> dict:
-        speaker, _ = self._resolve_coordinator(speaker_name)
+        speaker, coord = self._resolve_coordinator(speaker_name)
         with self._lock:
             sess = self._sessions.get(speaker.uid)
         if not sess:
-            return {"running": False, "speaker": speaker.player_name}
-        info = sess.to_dict()
+            # No worker session — read live coordinator state.
+            try:
+                transport = coord.get_current_transport_info()
+                state = transport.get("current_transport_state", "STOPPED")
+                track = coord.get_current_track_info()
+            except Exception:
+                return {"running": False, "engine": "native_queue", "speaker": speaker.player_name}
+            if state in ("STOPPED", "") or not track.get("uri"):
+                return {"running": False, "engine": "native_queue", "speaker": speaker.player_name}
+            return {
+                "engine": "native_queue",
+                "speaker": speaker.player_name,
+                "state": state,
+                "title": track.get("title", ""),
+                "artist": track.get("artist", ""),
+                "album": track.get("album", ""),
+                "position": track.get("position", ""),
+                "duration": track.get("duration", ""),
+                "uri": track.get("uri", ""),
+                "playlist_position": track.get("playlist_position", ""),
+            }
+        info = {"engine": "worker", **sess.to_dict()}
         with self._lock:
             pl = self._playlists.get(sess.playlist_name)
         if pl and 0 <= sess.current_index < len(pl.items):
@@ -585,7 +639,7 @@ class PlaylistManager:
 
     def _play_from_queue_with_stale_coord_retry(
         self, name: str, coord: SoCo, index: int
-    ) -> SoCo:
+    ) -> None:
         """Call `coord.play_from_queue(index)`, recovering once from a stale
         coordinator view (DD-A).
 
@@ -593,19 +647,41 @@ class PlaylistManager:
         `play_from_queue` instead of `play_uri`. The stale-coord symptom was
         not observed during Leg 1 hardware testing, but the precautionary wrap
         is cheap insurance given the retry pattern is already established.
-        Returns the coordinator that succeeded so callers can keep using it.
+
+        On SoCoSlaveException, the speakers cache is explicitly invalidated
+        (resetting the TTL so the next re-resolution forces a fresh discovery)
+        before re-resolving the coordinator.  Re-resolving alone is insufficient
+        because `_resolve_coordinator` → `_speakers_fresh` uses a 30 s TTL; a
+        retry within that window would reuse the stale coordinator.
         """
         from soco.exceptions import SoCoSlaveException
 
         try:
             coord.play_from_queue(index)
-            return coord
         except SoCoSlaveException:
-            # Invalidate the speakers cache by re-resolving; the fresh
-            # coordinator is the one the firmware currently reports.
+            # Flush the speakers cache so _resolve_coordinator forces a fresh
+            # discovery, then retry once.  If firmware still rejects, propagate.
+            self._invalidate_speakers_cache()
             _, fresh_coord = self._resolve_coordinator(name)
             fresh_coord.play_from_queue(index)
-            return fresh_coord
+
+    def has_active_session(self, speaker_uid: str) -> bool:
+        """Return True if a worker-engine session exists for `speaker_uid`.
+
+        Keyed on the named speaker's UID (same key used by _sessions), so
+        callers should pass the UID of the speaker the agent originally named,
+        not the coordinator's UID.
+
+        Check-then-act race: benign.  Tool calls are serialised at the MCP
+        transport layer (single-threaded from the controller's perspective), so
+        the session state cannot change between this check and the subsequent
+        action within the same tool call.
+        """
+        with self._lock:
+            sess = self._sessions.get(speaker_uid)
+            if sess is None:
+                return False
+            return sess.thread is not None and sess.thread.is_alive()
 
     def _validate_name(self, name: str) -> str:
         n = (name or "").strip()
@@ -619,16 +695,6 @@ class PlaylistManager:
         if pl is None:
             raise PlaylistError(f"No playlist named {name!r}")
         return pl
-
-    def _session_for(self, speaker_name: str) -> PlaybackSession:
-        speaker, _ = self._resolve_coordinator(speaker_name)
-        with self._lock:
-            sess = self._sessions.get(speaker.uid)
-        if sess is None:
-            raise PlaylistError(
-                f"No playlist currently playing on {speaker.player_name!r}"
-            )
-        return sess
 
     def _signal_stop(self, sess: PlaybackSession) -> None:
         sess.stop_event.set()
