@@ -1,6 +1,6 @@
 # Flight: Documentation + Smoke Coverage
 
-**Status**: landed
+**Status**: completed
 **Mission**: [Resilient Queue-Backed Playback](../../mission.md)
 
 ## Contributing to Criteria
