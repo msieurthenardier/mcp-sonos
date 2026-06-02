@@ -160,6 +160,46 @@ process WITHOUT cleanup (the exit = the reap).
 - **Operator confirmed the speaker kept playing after the MCP process exited** —
   Q1 (survive-reaping) proven on the shipped code, not just the Leg-1 raw spike.
 
+### version-reporting (Leg 6)
+**Status**: landed
+**Started**: 2026-06-01
+**Completed**: 2026-06-01
+
+#### Changes Made
+- `mcp_sonos/__init__.py` — Added `__version__ = "0.2.0"` as the single source of
+  truth; added `"__version__"` to `__all__`.
+- `pyproject.toml` — Replaced static `version = "0.1.0"` with `dynamic = ["version"]`
+  under `[project]`; added `[tool.hatch.version]` table with `path =
+  "mcp_sonos/__init__.py"` so hatchling reads the version from the package file.
+- `mcp_sonos/server.py` — Added `from . import __version__` and passed
+  `version=__version__` into the `FastMCP(...)` constructor call.
+- `tests/test_version.py` — New 3-test file asserting: `mcp_sonos.__version__ ==
+  "0.2.0"`, `mcp.version == mcp_sonos.__version__`, and `mcp.version` does not start
+  with `"3."` (guards against accidental reversion to FastMCP's framework version).
+
+#### Verification Output
+```
+$ .venv/bin/python -c "import mcp_sonos; print(mcp_sonos.__version__)"
+0.2.0
+
+$ .venv/bin/python -c "from mcp_sonos.server import mcp; print(mcp.version)"
+0.2.0
+
+$ .venv/bin/pip install -e . -q && .venv/bin/python -c "import importlib.metadata; print(importlib.metadata.version('mcp-sonos'))"
+0.2.0
+```
+
+#### CLAUDE.md Addition
+- `CLAUDE.md` — Added `## Versioning` section (between `## When extending` and
+  `## Important context`) documenting: `__init__.py` as single source of truth,
+  hatchling dynamic-version wiring in `pyproject.toml`, `FastMCP(version=__version__)`
+  regression history, `test_version.py` guard, and pre-1.0 bump convention.
+
+#### Test Result
+`pytest -q`: **41 passed in 0.91 s** (3 new + 38 pre-existing). Full suite green.
+
+---
+
 ## Decisions
 
 _None yet._

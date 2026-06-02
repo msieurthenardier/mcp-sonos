@@ -1,6 +1,6 @@
 # Flight: Native Queue Playback Path
 
-**Status**: landed
+**Status**: completed
 **Mission**: [Resilient Queue-Backed Playback](../../mission.md)
 
 ## Contributing to Criteria
@@ -156,6 +156,10 @@ start and its `coord.stop()` can land on top of the just-started native queue.
    Manual HAT smoke (kill MCP, watch advance) for Q1/Q2 remains operator-run.
 5. `hat-alignment` *(optional — not run)* — Operator satisfied after the Q1 reap
    HAT; the guided session was not needed.
+6. `version-reporting` *(completed)* — Debrief-surfaced fix: the MCP advertised
+   FastMCP's framework version (3.3.1); now reports its own `0.2.0` from a single
+   source (`__init__.__version__` + hatchling dynamic version), wired into
+   `FastMCP(version=…)`, with a guard test. (41 tests green.)
 
 ## Verification
 - **Automated (local pytest, mocked SoCo)**: classifier, queue-vs-worker

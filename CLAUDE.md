@@ -157,6 +157,23 @@ re-synthesize.
   the env var. Note: this trades startup-fast-fail for graceful
   degradation; pick accordingly per new env var.
 
+## Versioning
+
+Single source of truth: `mcp_sonos/__init__.py` → `__version__` (currently `"0.2.0"`).
+**Change the version here and nowhere else.**
+
+- `pyproject.toml` derives the package version from it via hatchling dynamic version
+  (`dynamic = ["version"]` under `[project]` + `[tool.hatch.version] path =
+  "mcp_sonos/__init__.py"`). Do NOT add a static `version =` back to `pyproject.toml`.
+- `mcp_sonos/server.py` passes `version=__version__` into `FastMCP(...)` so the MCP
+  `initialize` handshake advertises the project version (not FastMCP's framework version
+  — a regression that previously made the server report `"3.3.1"`).
+- `tests/test_version.py` guards the wiring (`mcp.version == __version__`, not `"3.x"`)
+  — forgetting to wire a bump fails the suite.
+
+**When to bump**: pre-1.0 semver-style — minor for meaningful new behavior/capabilities,
+patch for fixes. Example: native-queue playback capability took it `0.1.0 → 0.2.0`.
+
 ## Important context
 
 - **Repo is public**, no auth needed to clone or `uvx` install.

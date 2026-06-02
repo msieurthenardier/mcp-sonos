@@ -14,12 +14,14 @@ from typing import Annotated
 from fastmcp import FastMCP
 from pydantic import AfterValidator, Field
 
+from . import __version__
 from ._urls import validate_http_url
 from .controller import SonosController
 
 
 mcp = FastMCP(
     name="sonos",
+    version=__version__,
     instructions=(
         "Control Sonos speakers locally over WiFi. Speakers are addressed "
         "by their display name (case-insensitive). Transport commands "

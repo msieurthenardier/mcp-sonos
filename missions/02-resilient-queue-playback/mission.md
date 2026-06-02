@@ -138,7 +138,12 @@ agentic host that reaps the MCP on inactivity. No external users.
   stale-coordinator retry handling.
 
 ## Known Issues
-_None yet — emergent blockers will be added here as flights surface them._
+- [ ] Interim contract gap (Flight 1 → resolved by Flight 2): after a queue-backed
+  `playlist_play`, `playlist_stop`/`playlist_status` return `{"running": false}` while
+  the speaker is audibly playing, and `playlist_stop` does not actually stop the queue
+  (no `_sessions` entry). The tool contract misrepresents live state until Flight 2
+  ships the reap-resilient control surface. Discovered in Flight 1; affects any agent
+  using those tools on queue-backed playback in the interim.
 
 ## Flights
 
@@ -148,7 +153,7 @@ _None yet — emergent blockers will be added here as flights surface them._
 - [x] Flight 1: Native queue playback path — URL classifier (external vs
   MCP-hosted), queue-backed `playlist_play` with titles + native `play_mode`,
   worker-thread fallback, and the `add_multiple_to_queue` metadata checkpoint
-  — **landed** (Q1/Q2/Q3/Q5 + Q6-partial; Q1 reap proven on hardware)
+  — **completed** (Q1/Q2/Q3/Q5 + Q6-partial; Q1 reap proven on hardware; debriefed)
 - [ ] Flight 2: Reap-resilient control surface — stateless
   `playlist_status`/`next`/`previous`/`stop` against live speaker state, plus
   `say`/`play_url` takeover and grouping semantics
