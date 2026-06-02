@@ -55,6 +55,92 @@ ordering. Avoid the single `add_to_queue` path (it overrode the title to filenam
 
 ---
 
+### url-classifier (Leg 2)
+**Status**: landed
+**Started**: 2026-06-01
+**Completed**: 2026-06-01
+
+#### Changes Made
+- `mcp_sonos/_urls.py` — Added `is_mcp_hosted(url: str, host_ip: str, port: int) -> bool`.
+  Wraps the entire body in `try/except Exception: return False` to swallow
+  `urlparse(...).port` raising `ValueError` on non-integer port tokens.
+  Returns `True` iff `parsed.hostname == host_ip AND parsed.port == port` (exact
+  match; `None` port is not a match).
+- `tests/test_urls.py` — Added 10 new hardware-free unit tests covering all
+  acceptance-criteria bullets: same host+port → True; genuine MCP URL → True;
+  bare base URL → True; different host → False; no explicit port → False; same
+  host different port → False; non-integer port → False; empty/garbage input →
+  False. Updated module docstring to reflect new coverage.
+
+#### Test Result
+`pytest -x -q`: **20 passed in 0.26 s** (10 new + 10 pre-existing). Full suite green.
+
+---
+
+### queue-backed-play (Leg 3)
+**Status**: landed
+**Started**: 2026-06-01
+**Completed**: 2026-06-01
+
+#### Changes Made
+- `mcp_sonos/_urls.py` — Added `any_mcp_hosted(urls, host_ip, port)` one-liner
+  composition over `is_mcp_hosted`; used by `playlist_play` routing.
+- `mcp_sonos/playlists.py` — Major additions:
+  - Module-level `QUEUE_PARENT_ID = "A:TRACKS"` constant (non-`"-1"`, DD-E).
+  - `PlaylistManager.__init__` gains `host_ip` / `audio_port` keyword-only params
+    for URL classification.
+  - `play()` routing: no host/port → worker (conservative fallback); any MCP-hosted
+    URL → worker; all-external → native queue.
+  - `_play_via_worker()` — extracted from original `play()` body, adds
+    `"engine": "worker"` to return dict.
+  - `_play_via_queue()` — new native queue path: evicts worker (DD-D signal+stop+join
+    as one unit before queue ops), builds DIDL items per Leg 1 recipe + DD-E,
+    `clear_queue` → `add_multiple_to_queue` → set `play_mode` → call
+    `_play_from_queue_with_stale_coord_retry`. Returns `"engine": "native_queue"` (DD-C).
+  - `_play_from_queue_with_stale_coord_retry()` — DD-A sibling of controller's
+    `_play_uri_with_stale_coord_retry`; calls `coord.play_from_queue(index)` with
+    one recover-on-SoCoSlaveException retry.
+  - `next_track()` / `previous_track()` — graceful no-session path returns
+    `{"controllable": False, "engine": "native_queue", "speaker": ...}` instead of
+    raising `PlaylistError`.
+- `mcp_sonos/controller.py` — `PlaylistManager(...)` construction now passes
+  `host_ip=self._host_ip, audio_port=self.audio.port`.
+- `tests/_fakes.py` — `SoCoFake` extended: list-backed `_queue`, `_play_mode`,
+  `is_coordinator = True`, `add_multiple_to_queue` (appends, returns None),
+  `play_from_queue` (sets transport PLAYING), `clear_queue` (clears list),
+  `queue_size` property, `play_mode` get/set property.
+- `tests/test_queue_path.py` — 16 new hardware-free tests covering all AC bullets.
+
+#### Test Result
+`pytest -x -q`: **36 passed in 0.31 s** (16 new + 20 pre-existing). Full suite green.
+
+---
+
+### verify-integration (Leg 4)
+**Status**: landed
+**Started**: 2026-06-01
+**Completed**: 2026-06-01
+
+#### Changes Made
+- `queue_smoke.py` (new) — Queue-path smoke script mirroring `smoke_test.py` /
+  `playlist_smoke.py` conventions: `os.environ.setdefault("SONOS_IPS", ...)`,
+  `FastMCP.Client` in-process, `controller = SonosController()` / `register_tools(mcp,
+  controller)` at module level. Uses three external SoundHelix MP3 URLs (NOT
+  MCP-hosted). Asserts `engine == "native_queue"` and `total_items == len(EXTERNAL_TRACKS)`,
+  prints `now_playing` for operator confirmation, then stops and deletes the playlist.
+  Fails fast with a clear message if no hardware is reachable.
+
+#### Test Result
+`pytest -x -q`: **36 passed in 0.25 s**. No regressions.
+
+#### Manual HAT steps (Leg 5 / operator-run)
+- **Q1 reap test**: while queue is active, kill the MCP process and confirm the
+  speaker advances tracks autonomously (no MCP involvement).
+- **Title-stickiness check**: confirm DIDL titles appear on the hardware side
+  during queue playback.
+
+---
+
 ## Decisions
 
 _None yet._
@@ -63,7 +149,17 @@ _None yet._
 
 ## Deviations
 
-_None yet._
+### Leg 3: conservative worker fallback when no host/port configured
+**Deviation**: When `PlaylistManager` is constructed without `host_ip`/`audio_port`
+(e.g. in older tests or callers that pre-date Leg 3), all playlists route to the
+**worker engine** rather than to the native queue.
+
+**Rationale**: Without audio host coordinates we cannot distinguish MCP-hosted URLs
+from external ones. Routing all unconfigured-context playlists to the queue would be
+incorrect (a TTS URL would land in the Sonos queue and become unreachable after an MCP
+restart). The conservative fallback preserves all pre-Leg-3 behavior and keeps existing
+tests green without requiring test refactoring. The production `SonosController` always
+supplies real coordinates, so the queue path is taken in production.
 
 ---
 

@@ -140,10 +140,10 @@ start and its `coord.stop()` can land on top of the just-started native queue.
    DIDL objects required (bare URLs rejected); native multi-track advancement
    confirmed on hardware; no stale-coord symptom; title-stickiness inconsistent
    (handed to Leg 3); Sonos app display de-scoped. See flight log for the recipe. (Q2)
-2. `url-classifier` — Host/port-relative classifier `is_mcp_hosted(url, host_ip,
+2. `url-classifier` *(completed)* — Host/port-relative classifier `is_mcp_hosted(url, host_ip,
    port)` (exact host+port match), unit-tested hardware-free with synthetic
    host/port. (supports Q5 routing)
-3. `queue-backed-play` — Re-back `playlist_play` on the native queue for
+3. `queue-backed-play` *(completed)* — Re-back `playlist_play` on the native queue for
    all-external playlists, using the Leg 1 recipe (DIDL via `add_multiple_to_queue`,
    `parent_id != "-1"`): evict any live worker session for the speaker;
    resolve+use the coordinator; clear/add/play with native `play_mode`;
@@ -151,8 +151,9 @@ start and its `coord.stop()` can land on top of the just-started native queue.
    playlist item's title; fall back to filename). Route any MCP-hosted URL to the
    unchanged worker engine. Extend `SoCoFake` with queue state. Add tests for
    routing, fallback, and worker-active → queue-play handoff. (Q1, Q2, Q3, Q5, Q6-partial)
-4. `verify-integration` — Local pytest for classifier/routing/fallback/eviction;
-   manual HAT smoke (kill MCP, watch advance) for Q1/Q2.
+4. `verify-integration` *(automated portion completed)* — Local pytest for
+   classifier/routing/fallback/eviction green (38 tests); `queue_smoke.py` added.
+   Manual HAT smoke (kill MCP, watch advance) for Q1/Q2 remains operator-run.
 5. `hat-alignment` *(optional)* — Guided live-hardware session: walk through
    the queue path together, fix issues as they surface until satisfied.
 
