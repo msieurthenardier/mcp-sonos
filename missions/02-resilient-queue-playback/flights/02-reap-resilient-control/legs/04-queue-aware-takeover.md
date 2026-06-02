@@ -1,7 +1,13 @@
 # Leg: queue-aware-takeover
 
-**Status**: completed
+**Status**: landed
 **Flight**: [Reap-Resilient Control Surface](../flight.md)
+
+> **Reopened post-Leg-5 (mid-track pivot).** Operator revised resume to pick up where
+> interrupted, not from the top. Leg 5 seek spike confirmed the host honors HTTP range
+> requests. Snapshot now adds `position`; resume does `play_from_queue(index)` →
+> `seek(position)` wrapped in try/except (falls back to start-of-track if the host
+> rejects the seek). See flight-log FD Notes.
 
 ## Objective
 Make `say` and single-coordinator `play_url` snapshot an active native queue, play the
@@ -52,6 +58,12 @@ ends queue playback. (Q6)
       play_mode)` when a native queue is actively playing on the coordinator
       (`queue_size > 0` AND PLAYING AND `int(playlist_position) > 0`), runs the clip, blocks
       via `_wait_until_stopped`, then `coord.play_from_queue(queue_index)` + restores `play_mode`
+- [x] **(mid-track pivot)** Snapshot ALSO captures `position` (from
+      `get_current_track_info()["position"]`); on resume, after `play_from_queue(index)`,
+      call `coord.seek(position)` wrapped in its OWN try/except so a host that rejects the
+      seek (no HTTP range support) falls back to start-of-track without raising. A test
+      asserts seek is attempted with the snapshot position, and a separate test asserts a
+      seek failure is swallowed (resume still succeeds at start-of-track).
 - [x] `say` (single speaker) auto-resumes the queue after the announcement
 - [x] `play_url` (single coordinator) auto-resumes too; it now BLOCKS until clip-end with a
       generous cap (documented contract change); returns post-resume `_track_state(coord)`

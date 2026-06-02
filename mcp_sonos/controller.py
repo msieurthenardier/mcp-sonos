@@ -440,6 +440,7 @@ class SonosController:
         snapshotted = False
         saved_index: int = 0
         saved_play_mode: str = "NORMAL"
+        saved_position: str | None = None
 
         # --- snapshot phase ---
         if not self.playlists.has_active_session(speaker_uid):
@@ -454,10 +455,12 @@ class SonosController:
                 queue_size = 0
                 state = "STOPPED"
                 playlist_pos = 0
+                track_info = {}
 
             if queue_size > 0 and state == "PLAYING" and playlist_pos > 0:
                 saved_index = playlist_pos - 1  # 1-based → 0-based
                 saved_play_mode = coord.play_mode
+                saved_position = track_info.get("position")
                 snapshotted = True
 
         # --- clip phase ---
@@ -470,6 +473,14 @@ class SonosController:
         if snapshotted:
             try:
                 coord.play_from_queue(saved_index)
+                # Mid-track resume: seek to the position captured at snapshot time.
+                # Wrapped in its own try/except so hosts without HTTP range support
+                # fall back to start-of-track silently (best-effort).
+                if saved_position and saved_position not in (None, "0:00:00"):
+                    try:
+                        coord.seek(saved_position)
+                    except Exception:
+                        pass  # start-of-track fallback: swallow seek failures
                 coord.play_mode = saved_play_mode
             except Exception:
                 pass  # best-effort: swallow resume failures

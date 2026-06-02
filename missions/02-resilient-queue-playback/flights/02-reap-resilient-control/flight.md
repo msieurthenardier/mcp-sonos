@@ -31,9 +31,11 @@ clears the Flight 1 debrief hygiene backlog in the same `playlists.py` surface.
   `play_uri`? (Resume is **start-of-track**, so NO seek is needed.) Confirm the
   `get_current_track_info()["playlist_position"]` 1-based → 0-based off-by-one. →
   resolved by Leg 3 (hard gate, HAT).
-- [x] Resume point → **start-of-track** (restart the interrupted queue track from
-  0:00). Snapshot is just `queue index + play_mode + play state`; no `seek`, so the
-  "are external MP3s seekable" risk is removed.
+- [x] Resume point → **mid-track, best-effort** (revised post-Leg-5 HAT; supersedes the
+  earlier start-of-track call). Snapshot adds `position`; resume does
+  `play_from_queue(index)` then `seek(position)`. The Leg 5 seek spike confirmed the
+  external host (gramotunes) honors HTTP range requests (seek to 0:21 landed at 0:23).
+  Hosts that DON'T support range requests fall back to start-of-track via try/except.
 - [x] Auto-resume scope → **both `say` and `play_url`**. `say` already blocks via
   `_wait_until_stopped`; `play_url` will be changed to block the same way then
   resume (its previous return-immediately contract changes — documented). Reap
@@ -63,12 +65,14 @@ loaded) so a later `playlist_play`/resume can pick it back up. (Maintainer decis
 **`engine` key everywhere**: all control tools return the `engine` discriminator
 (`native_queue` vs `worker`) consistently — Flight 1 left it absent from stop/status.
 
-**Q6 = auto-resume (snapshot/restore), start-of-track**: `say`/`play_url` on an active
-queue snapshot `(queue index, play_mode, was-playing)`, play the clip, block until
-clip-end via `_wait_until_stopped` (already used by `say`; extend to `play_url` —
-this changes `play_url`'s return-immediately contract, documented), then restore with
-`play_from_queue(index)` + restore `play_mode`. **No `seek`** (start-of-track). Mechanism
-premises are empirical → **Leg 3 hard-gate spike** before Leg 4 locks it.
+**Q6 = auto-resume (snapshot/restore), mid-track best-effort** *(revised post-Leg-5)*:
+`say`/`play_url` on an active queue snapshot `(queue index, position, play_mode)`, play
+the clip, block until clip-end via `_wait_until_stopped` (already used by `say`; extend to
+`play_url` — changes `play_url`'s return-immediately contract, documented), then restore
+with `play_from_queue(index)` → `seek(position)` (+ restore `play_mode`). The `seek` is
+wrapped in try/except: hosts honoring HTTP range requests resume mid-track (gramotunes
+confirmed in the Leg 5 spike); others fall back to start-of-track. Mechanism premises
+were proven empirically (Leg 3 gate + Leg 5 seek spike).
 
 **`say("all", ...)` is out of auto-resume scope (documented limitation)**: `_say_all`
 unjoins every speaker (destroys the group) and leaves them ungrouped; a queue playing
@@ -153,8 +157,8 @@ unreliable `title`).
    `play_from_queue(index)` + restore `play_mode`, for single-coordinator `say`/`play_url`.
    Document the takeover contract (incl. `play_url`'s changed blocking behavior), the
    `say("all")` group limitation, and grouping (decision-level; README prose is Flight 3). (Q6)
-5. `verify-integration` — pytest for the control surface + snapshot/restore logic;
-   manual reap+respawn HAT (kill MCP, respawn, drive the live queue).
+5. `verify-integration` *(completed)* — pytest (63 tests) + manual HAT: Q4 reap+respawn
+   control and Q6 say-resume (mid-track) both verified on hardware.
 6. `hat-alignment` *(optional)* — guided live-hardware session for the full
    reap+respawn + takeover-resume flow.
 

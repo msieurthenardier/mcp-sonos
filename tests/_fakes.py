@@ -58,6 +58,10 @@ class SoCoFake:
     play_from_queue_raise: "Exception | None" = field(default=None)
     # Last index passed to play_from_queue — lets tests assert the resume index.
     play_from_queue_last_index: "int | None" = field(default=None)
+    # Controls for error injection: if seek_raise is set, seek raises that exception.
+    seek_raise: "Exception | None" = field(default=None)
+    # Last timestamp passed to seek — lets tests assert the seek position.
+    seek_last: "str | None" = field(default=None)
 
     def __post_init__(self) -> None:
         self.group = FakeGroup(coordinator=self, members=[self])
@@ -153,6 +157,19 @@ class SoCoFake:
             # DidlMusicTrack exposes .title; fall back gracefully in tests.
             title = getattr(item, "title", "")
             self._track = {"uri": "", "title": title}
+
+    def seek(self, timestamp: str) -> None:
+        """Simulate seeking to `timestamp` (e.g. "0:01:30").
+
+        Records the last seek value so tests can assert it.  If `seek_raise`
+        is set, raises that exception instead (simulates a host that rejects
+        HTTP range requests).
+        """
+        self.seek_last = timestamp
+        if self.seek_raise is not None:
+            exc = self.seek_raise
+            self.seek_raise = None
+            raise exc
 
     @property
     def queue_size(self) -> int:

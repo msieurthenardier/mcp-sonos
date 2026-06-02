@@ -99,7 +99,7 @@ def _wire_speaker(monkeypatch, controller: SonosController, speaker: SoCoFake) -
 
 def test_say_resumes_queue_after_announcement(monkeypatch, stub_controller):
     """say() must snapshot, play the TTS clip, then resume the queue at the
-    correct 0-based index, and restore play_mode."""
+    correct 0-based index, seek to the snapshot position, and restore play_mode."""
     speaker = _make_speaker_playing_queue(playlist_position="2", play_mode="NORMAL")
     _wire_speaker(monkeypatch, stub_controller, speaker)
 
@@ -108,6 +108,10 @@ def test_say_resumes_queue_after_announcement(monkeypatch, stub_controller):
     # play_from_queue should have been called with index = playlist_position - 1 = 1
     assert speaker.play_from_queue_last_index == 1, (
         f"expected resume at index 1, got {speaker.play_from_queue_last_index}"
+    )
+    # seek should have been called with the snapshot position ("0:01:30")
+    assert speaker.seek_last == "0:01:30", (
+        f"expected seek to '0:01:30', got {speaker.seek_last!r}"
     )
     # play_mode should have been restored to "NORMAL"
     assert speaker._play_mode == "NORMAL"
@@ -118,7 +122,8 @@ def test_say_resumes_queue_after_announcement(monkeypatch, stub_controller):
 
 
 def test_say_resumes_with_non_default_play_mode(monkeypatch, stub_controller):
-    """play_mode is saved and restored faithfully even when non-default."""
+    """play_mode is saved and restored faithfully even when non-default.
+    Seek is also called with the snapshot position."""
     speaker = _make_speaker_playing_queue(
         playlist_position="1", play_mode="SHUFFLE_NOREPEAT"
     )
@@ -128,6 +133,8 @@ def test_say_resumes_with_non_default_play_mode(monkeypatch, stub_controller):
 
     assert speaker.play_from_queue_last_index == 0
     assert speaker._play_mode == "SHUFFLE_NOREPEAT"
+    # seek called with the snapshot position from _make_speaker_playing_queue default
+    assert speaker.seek_last == "0:01:30"
 
 
 # ---------------------------------------------------------------------------
@@ -136,12 +143,12 @@ def test_say_resumes_with_non_default_play_mode(monkeypatch, stub_controller):
 
 
 def test_play_url_resumes_queue_and_blocks(monkeypatch, stub_controller):
-    """play_url() must block (wait_until_stopped called) and resume the queue."""
+    """play_url() must block (wait_until_stopped called), resume the queue,
+    and seek to the snapshot position."""
     speaker = _make_speaker_playing_queue(playlist_position="3")
     _wire_speaker(monkeypatch, stub_controller, speaker)
 
     wait_called = []
-    real_wait = SonosController._wait_until_stopped
 
     def _capturing_wait(coord, timeout=None):
         wait_called.append(timeout)
@@ -157,10 +164,13 @@ def test_play_url_resumes_queue_and_blocks(monkeypatch, stub_controller):
 
     # Queue resumed at correct index.
     assert speaker.play_from_queue_last_index == 2  # position 3 → index 2
+    # Seek called with the snapshot position.
+    assert speaker.seek_last == "0:01:30"
 
 
 def test_play_url_returns_post_resume_state(monkeypatch, stub_controller):
-    """play_url() must return _track_state(coord) AFTER resume (not the clip state)."""
+    """play_url() must return _track_state(coord) AFTER resume (not the clip state).
+    Seek is also called with the snapshot position."""
     speaker = _make_speaker_playing_queue(playlist_position="1")
     _wire_speaker(monkeypatch, stub_controller, speaker)
 
@@ -171,6 +181,8 @@ def test_play_url_returns_post_resume_state(monkeypatch, stub_controller):
     # The return dict has the standard fields.
     assert "url" in result
     assert "played_on_coordinator" in result
+    # Seek called with snapshot position.
+    assert speaker.seek_last == "0:01:30"
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +211,8 @@ def test_play_file_inherits_resume(monkeypatch, tmp_path, stub_controller):
 
     # Queue resume happened (inherits from play_url).
     assert speaker.play_from_queue_last_index == 0
+    # Seek also inherited via play_url.
+    assert speaker.seek_last == "0:01:30"
 
 
 # ---------------------------------------------------------------------------
@@ -381,3 +395,64 @@ def test_resume_failure_is_swallowed(monkeypatch, stub_controller):
     result = stub_controller.say("Kitchen", "swallow test")
 
     assert result["text"] == "swallow test"
+
+
+# ---------------------------------------------------------------------------
+# Mid-track resume: seek is attempted with snapshot position
+# ---------------------------------------------------------------------------
+
+
+def test_seek_called_with_snapshot_position(monkeypatch, stub_controller):
+    """After play_from_queue, seek is called with the position captured at
+    snapshot time so resume picks up mid-track rather than at the top."""
+    speaker = _make_speaker_playing_queue(playlist_position="2")
+    # Override the default position to a specific value for this assertion.
+    speaker._track["position"] = "0:02:45"
+    _wire_speaker(monkeypatch, stub_controller, speaker)
+
+    stub_controller.say("Kitchen", "mid-track seek test")
+
+    assert speaker.seek_last == "0:02:45", (
+        f"expected seek to '0:02:45', got {speaker.seek_last!r}"
+    )
+    # play_from_queue must have succeeded as well.
+    assert speaker.play_from_queue_last_index == 1
+
+
+def test_seek_failure_swallowed_resume_still_completes(monkeypatch, stub_controller):
+    """If coord.seek() raises (host without HTTP range support), the exception
+    is swallowed in its own inner try/except and the resume still completes —
+    playback continues from start-of-track."""
+    speaker = _make_speaker_playing_queue(playlist_position="1")
+    _wire_speaker(monkeypatch, stub_controller, speaker)
+
+    # Inject a seek failure: host rejects the range request.
+    speaker.seek_raise = RuntimeError("HTTP range request not supported")
+
+    # Must not raise; resume still completes (play_from_queue succeeded).
+    result = stub_controller.say("Kitchen", "seek fail fallback test")
+
+    assert result["text"] == "seek fail fallback test"
+    # play_from_queue was called (resume started) — confirms start-of-track fallback.
+    assert speaker.play_from_queue_last_index == 0
+    # seek was attempted (seek_last is set because we record before raising).
+    assert speaker.seek_last == "0:01:30"
+    # play_mode was still restored (outer try/except didn't abort early).
+    assert speaker._play_mode == "NORMAL"
+
+
+def test_seek_skipped_when_position_is_zero(monkeypatch, stub_controller):
+    """When the snapshot position is '0:00:00', seek is not attempted (trivial
+    position; no meaningful mid-track offset)."""
+    speaker = _make_speaker_playing_queue(playlist_position="1")
+    speaker._track["position"] = "0:00:00"
+    _wire_speaker(monkeypatch, stub_controller, speaker)
+
+    stub_controller.say("Kitchen", "zero position test")
+
+    # play_from_queue must have happened.
+    assert speaker.play_from_queue_last_index == 0
+    # seek must NOT have been called.
+    assert speaker.seek_last is None, (
+        f"seek should not be called for position '0:00:00', got {speaker.seek_last!r}"
+    )

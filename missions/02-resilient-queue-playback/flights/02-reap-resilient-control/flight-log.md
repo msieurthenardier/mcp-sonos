@@ -106,6 +106,39 @@ Proved the snapshot→clip→restore mechanism for Leg 4:
 
 ---
 
+### Leg 4 (reopened): mid-track seek addition — landed (2026-06-02)
+
+**Status**: landed
+
+**Changes**:
+- `mcp_sonos/controller.py` — `_with_queue_resume`: snapshot now also captures
+  `saved_position` from `track_info.get("position")` inside the existing guarded
+  snapshot block. On resume, after `play_from_queue(saved_index)`, calls
+  `coord.seek(saved_position)` wrapped in its OWN inner `try/except` (seek failures
+  swallowed — start-of-track fallback). Seek is skipped when `saved_position` is `None`
+  or `"0:00:00"` (trivial offset). Order: `play_from_queue` → `seek` (own try/except) →
+  `play_mode` restore. The outer best-effort try/except around the whole resume block is
+  unchanged.
+- `tests/_fakes.py` — `SoCoFake`: added `seek_raise: Exception | None` and
+  `seek_last: str | None` fields; added `seek(timestamp)` method that records
+  `seek_last = timestamp` then raises `seek_raise` if set.
+- `tests/test_queue_resume.py`: updated all five existing queue-resume tests that exercise
+  the happy path to also assert `speaker.seek_last == "0:01:30"` (the default position in
+  `_make_speaker_playing_queue`). Added three new tests:
+  - `test_seek_called_with_snapshot_position`: explicit override to `"0:02:45"`, asserts
+    seek is called with that exact value.
+  - `test_seek_failure_swallowed_resume_still_completes`: injects `seek_raise`; asserts no
+    exception propagates, `play_from_queue_last_index == 0`, `seek_last` recorded, and
+    `play_mode` still restored.
+  - `test_seek_skipped_when_position_is_zero`: sets position to `"0:00:00"`; asserts
+    `seek_last is None` (seek not attempted).
+
+**Test result**: 63 passed in 2.57s (full suite green; 3 new tests added, 14 total in test_queue_resume.py)
+
+**Deviations**: None.
+
+---
+
 ## Decisions
 
 _None yet._
@@ -144,3 +177,28 @@ Verdict: **approve with changes**. Findings folded into the spec before `ready`:
 Operator decisions: auto-resume covers BOTH `say` and `play_url`; resume point is
 **start-of-track** (no seek → external-MP3 seekability risk removed). Second review
 cycle skipped — changes were direct incorporations of the Architect's recs + those decisions.
+
+### Flight Director Notes — pivot: mid-track resume (post-Leg-5)
+During the Leg 5 HAT the operator revised the resume-point decision: start-of-track is
+wrong UX; the queue should pick up **where it was interrupted**. A Leg 5 seek spike
+proved the external host (gramotunes) honors HTTP range requests — `seek('0:00:21')`
+after `play_from_queue(0)` landed at `0:00:23`, PLAYING (operator confirmed by ear).
+Rationale + decision: reopen Leg 4 to snapshot `position` and resume via
+`play_from_queue(index)` → `seek(position)`, wrapped in try/except so hosts WITHOUT
+range support fall back to start-of-track (best-effort). The earlier "start-of-track"
+framing in the Design Review notes above is superseded by this entry. Treating
+mid-track best-effort as the live spec going forward.
+
+### Leg 5: verify-integration — completed (2026-06-02)
+**Status**: completed. Suite: 63 tests green.
+- **Q4 reap+respawn HAT** (reap_test.py loads queue + exits; reap_control.py fresh process):
+  `playlist_status` returned live state (engine native_queue, artist/album, playlist_position);
+  `playlist_next` advanced Hausswolff→Saya Gray (pos 1→2); `playlist_stop` halted, queue kept.
+  Operator confirmed the audible skip + stop.
+- **Q6 say-resume HAT** (say_resume.py): music → spoken announcement → same track resumed
+  mid-track (position 0:05 before → 0:07 after the mid-track pivot). Operator confirmed by ear.
+- **Mid-track pivot** (Leg 4 reopened): `_with_queue_resume` now snapshots `position` and
+  `seek()`s after `play_from_queue`, wrapped in its own try/except (start-of-track fallback for
+  hosts without HTTP range support). +3 tests (seek attempted / seek-failure swallowed / zero-pos skip).
+- `play_url` resume not run live (shares the identical helper; a live clip blocks the full
+  duration) — covered by say-live + unit tests.
