@@ -56,6 +56,8 @@ class SoCoFake:
     # Controls for error injection: if play_from_queue_raise is set, play_from_queue
     # raises that exception on the first call only, then succeeds subsequently.
     play_from_queue_raise: "Exception | None" = field(default=None)
+    # Last index passed to play_from_queue — lets tests assert the resume index.
+    play_from_queue_last_index: "int | None" = field(default=None)
 
     def __post_init__(self) -> None:
         self.group = FakeGroup(coordinator=self, members=[self])
@@ -70,7 +72,11 @@ class SoCoFake:
         return dict(self._track)
 
     def play_uri(self, uri: str, title: Optional[str] = None, force_radio: bool = False) -> None:
-        self._track = {"uri": uri, "title": title or ""}
+        # MERGE into _track rather than replacing it: preserves playlist_position,
+        # artist, album, etc. so snapshot tests can read these fields after a
+        # play_uri call (e.g. _with_queue_resume reads playlist_position from
+        # get_current_track_info() which returns a copy of _track).
+        self._track = {**self._track, "uri": uri, "title": title or ""}
         self._transport = {"current_transport_state": "PLAYING"}
 
     def pause(self) -> None:
@@ -102,6 +108,11 @@ class SoCoFake:
     def mute(self, v: bool) -> None:
         self._mute = bool(v)
 
+    def partymode(self) -> None:
+        # No-op for tests that exercise the _say_all path; group modelling
+        # is not needed for queue-resume assertions.
+        pass
+
     def unjoin(self) -> None:
         # Fake doesn't model multi-group state — just refresh group-of-one.
         self.group = FakeGroup(coordinator=self, members=[self])
@@ -131,6 +142,7 @@ class SoCoFake:
         call and clears the flag so subsequent calls succeed.
         """
         self.call_log.append("play_from_queue")
+        self.play_from_queue_last_index = index
         if self.play_from_queue_raise is not None:
             exc = self.play_from_queue_raise
             self.play_from_queue_raise = None

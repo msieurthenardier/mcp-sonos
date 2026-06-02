@@ -665,6 +665,24 @@ class PlaylistManager:
             _, fresh_coord = self._resolve_coordinator(name)
             fresh_coord.play_from_queue(index)
 
+    def has_active_session(self, speaker_uid: str) -> bool:
+        """Return True if a worker-engine session exists for `speaker_uid`.
+
+        Keyed on the named speaker's UID (same key used by _sessions), so
+        callers should pass the UID of the speaker the agent originally named,
+        not the coordinator's UID.
+
+        Check-then-act race: benign.  Tool calls are serialised at the MCP
+        transport layer (single-threaded from the controller's perspective), so
+        the session state cannot change between this check and the subsequent
+        action within the same tool call.
+        """
+        with self._lock:
+            sess = self._sessions.get(speaker_uid)
+            if sess is None:
+                return False
+            return sess.thread is not None and sess.thread.is_alive()
+
     def _validate_name(self, name: str) -> str:
         n = (name or "").strip()
         if not n:

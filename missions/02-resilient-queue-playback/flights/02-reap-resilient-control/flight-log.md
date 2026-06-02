@@ -54,6 +54,58 @@ Planned and design-reviewed. Status `ready`. Execution not yet started.
 
 ---
 
+## Manual HAT — Leg 3 takeover-spike (hard gate)
+
+**Status**: PASS — gate decision PROCEED. (Throwaway spike, not committed; live Kitchen/Patio.)
+
+Proved the snapshot→clip→restore mechanism for Leg 4:
+- `coord.play_uri(clip)` over an active queue **preserved the queue** (`queue_size`
+  stayed 2 throughout the clip and after stop).
+- Resume works from a STOPPED coordinator whose source was changed to the clip URL:
+  `play_from_queue(0)` returned to playlist_position 1 (Anna von Hausswolff), operator
+  confirmed by ear it restarted from the top.
+- **Off-by-one confirmed**: 1-based `playlist_position` (snapshot=1) → `play_from_queue(0)`
+  lands on the same track. Leg 4 uses `index = playlist_position - 1`.
+- `play_mode` read (`NORMAL`) and restored.
+- Clip-end detection: simulated via explicit `stop()` (the novel part — resume FROM
+  STOPPED — is proven). Natural clip-end → STOPPED is already handled by `say()`'s
+  `_wait_until_stopped` poll in production; Leg 4 reuses it (extends to `play_url`).
+
+---
+
+### Leg 4: queue-aware-takeover — landed (2026-06-02)
+
+**Status**: landed
+
+**Changes**:
+- `mcp_sonos/controller.py`:
+  - Added `Callable` import.
+  - Added `PLAY_URL_RESUME_TIMEOUT_SECONDS` constant (default 3600, env-overridable via `PLAY_URL_RESUME_TIMEOUT_SECONDS`).
+  - Added `_with_queue_resume(coord, speaker_uid, run_clip, *, timeout)` helper: snapshots `(index, play_mode)` when a native queue is actively playing (`queue_size > 0` AND PLAYING AND `int(playlist_position) > 0` AND no worker session for `speaker_uid`), calls `run_clip()`, blocks via `_wait_until_stopped`, then resumes via `coord.play_from_queue(index)` + `coord.play_mode = saved` (best-effort, exceptions swallowed).
+  - Rewired `say()` single-speaker path: replaced direct `_play_uri_with_stale_coord_retry` + `_wait_until_stopped` with a `_play_clip` closure and `_with_queue_resume`, passing `s.uid` (named speaker's UID) and `timeout=TTS_TIMEOUT_SECONDS`. `_say_all` path unchanged.
+  - Rewired `play_url()`: replaced fire-and-forget `coord.play_uri` with `_with_queue_resume`; updated docstring to document the blocking contract change and best-effort resume. `play_file()` inherits via `play_url()`.
+- `mcp_sonos/playlists.py`: Added `has_active_session(speaker_uid) -> bool` predicate; reads `_sessions` under lock; comment documents the check-then-act race is benign (single-threaded at tool-call level).
+- `tests/_fakes.py`:
+  - `play_uri` now MERGES into `_track` (preserves `playlist_position`, `artist`, `album`) instead of replacing it, so snapshot tests work.
+  - Added `play_from_queue_last_index: int | None` field (records last index passed to `play_from_queue`).
+  - Added `partymode()` no-op stub (needed by `_say_all` path in new tests).
+- `tests/test_queue_resume.py`: New test file, 11 tests covering: `say` resumes at correct index + restores play_mode; non-default play_mode restored; `play_url` blocks with generous timeout + resumes; `play_url` returns post-resume state; `play_file` inherits resume; no-queue skip (3 guard conditions tested: empty queue, STOPPED transport, position "0"); worker-session active skip; `say("all")` no resume; resume failure swallowed.
+
+**Test result**: 60 passed in 2.50s (full suite green; 11 new tests added)
+
+**Takeover / grouping semantics documented**:
+- Snapshot keys on the named speaker's UID (`s.uid`), matching `_sessions` keying; NOT the coordinator's UID.
+- Resume targets the coordinator at snapshot time. If grouping changed while the clip played, the resume may land on a different device — best-effort, no group reconstruction.
+- `say("all")` / `_say_all`: group is dissolved before the clip; no queue resume attempted (documented limitation; group reconstruction is out of scope).
+- Worker-session active: worker owns its lifecycle; the snapshot guard `has_active_session` causes the resume to be skipped — the worker will resume on its own schedule.
+- MCP reaped mid-clip for a long `play_url`: resume is lost; best-effort, swallowed.
+- `play_url` contract change: was fire-and-forget; now blocks until clip-end (or PLAY_URL_RESUME_TIMEOUT_SECONDS). Live streams that never stop simply don't auto-resume after the cap.
+
+**Deviations**:
+- `say()` wraps the `_play_uri_with_stale_coord_retry` call inside a `_play_clip` closure (via `coord_holder`) so the helper can update the coordinator reference if the stale-coord retry fires. The snapshot and `_wait_until_stopped` still use the original coord from before the retry in that rare path — the stale-coord retry + queue resume corner case is best-effort and the existing stale-coord tests patch `_wait_until_stopped` to a no-op, so no regression.
+
+---
+
 ## Decisions
 
 _None yet._

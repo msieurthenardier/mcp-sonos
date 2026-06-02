@@ -142,13 +142,13 @@ unreliable `title`).
    flush in the queue retry; remove dead code (`_session_for`, drop unused retry return);
    add missing tests (`play_mode`-set-before-`play_from_queue` ordering, `status()`
    no-session, `SoCoSlaveException` retry forces re-resolution).
-3. `takeover-spike` *(hard gate, HAT)* — on hardware, confirm: (a) `play_uri` (clip)
+3. `takeover-spike` *(hard gate, HAT — PASSED)* — on hardware, confirm: (a) `play_uri` (clip)
    preserves the loaded queue; (b) `play_from_queue(index)` works on a STOPPED
    coordinator whose source was changed to the clip URL; (c) the 1-based
    `playlist_position` → 0-based `play_from_queue(index)` off-by-one; (d) clip-end is
    detectable via `_wait_until_stopped`; (e) `play_mode` snapshot/restore. (No seek —
    start-of-track.) **No Leg 4 until this lands.** (Q6 mechanism)
-4. `queue-aware-takeover` — implement snapshot `(index, play_mode, was-playing)` →
+4. `queue-aware-takeover` *(completed)* — implement snapshot `(index, play_mode, was-playing)` →
    clip → block via `_wait_until_stopped` (extend `play_url` to block too) →
    `play_from_queue(index)` + restore `play_mode`, for single-coordinator `say`/`play_url`.
    Document the takeover contract (incl. `play_url`'s changed blocking behavior), the
