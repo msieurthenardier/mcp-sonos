@@ -26,6 +26,12 @@ Speakers are addressed by name (case-insensitive). Transport commands
 auto-route to the group coordinator; responses include `group_members`
 so the agent always sees what got affected.
 
+`playlist_play` uses **two engines** depending on URL type: all-external
+URLs → native Sonos queue (survives MCP restart/reap, speaker advances
+independently); any MCP-hosted or local-file URL → in-process worker
+thread. The response includes an `engine` key (`native_queue` or
+`worker`) so the agent knows which path is active.
+
 ## Install & run
 
 ### With `uvx` (zero install, recommended)
@@ -81,6 +87,7 @@ file when running from source. See `.env.example` in the repo.
 | `HOST_IP` | _(auto-detected by routing probe + interface scan)_ | LAN IP the audio HTTP server should advertise to speakers. Override when auto-detection picks the wrong interface — common when the host has multiple interfaces (Docker, VPN, WSL2 in NAT mode). Must be an IP **the speakers can reach**. |
 | `AUDIO_PORT` | _(first free TCP port in 8000-8999)_ | Pin the audio server to a specific port. Useful when your firewall rule allows only one port instead of a range, or for stable logs. |
 | `AUDIO_MEDIA_ROOT` | _(unset — `play_file` disabled)_ | Directory the `play_file` tool is allowed to stage from. Capability scoping against a misaligned agent: when unset, `play_file` returns an error and stages nothing. Paths are resolved (symlinks followed) before the containment check; extensions are restricted to `.mp3`/`.wav`/`.flac`/`.m4a`/`.ogg`. Does not secure the audio HTTP host itself — see [Networking / topology limitations](#networking--topology-limitations). |
+| `PLAY_URL_RESUME_TIMEOUT_SECONDS` | `3600` | Maximum time `play_url()` (and `play_file()`, which calls it) blocks waiting for a clip to finish before giving up and attempting to resume a native Sonos queue (mid-track, best-effort). Generous default covers most long-form content; live streams that never stop won't auto-resume after this cap (silently swallowed). |
 | `PIPER_VOICE` | `en_US-lessac-medium` | Any [Piper voice](https://huggingface.co/rhasspy/piper-voices). Format: `<lang>-<speaker>-<quality>`. Higher quality voices are larger; "medium" is a good balance (~60 MB). |
 | `PIPER_DATA_DIR` | `~/.cache/mcp-sonos/voices` | Where voice models are cached. Set this if you want the cache to persist somewhere specific (e.g., a shared volume across container restarts). |
 
@@ -195,11 +202,20 @@ Read these before you wire the server into an agent — they save real time.
 
 ### TTS / `say` limitations
 
-- **`say` interrupts current playback.** If the user was streaming radio
-  and you call `say`, the radio stops. The controller does NOT
-  auto-resume — to compose a "pause → announce → resume" flow, the
-  agent must capture `now_playing` first, then `play_url` the original
-  URL after `say` returns.
+- **`say` interrupts current playback, then auto-resumes a native queue
+  (mid-track, best-effort).** If the speaker had a native Sonos queue
+  active (`engine: "native_queue"` from a prior `playlist_play`), the
+  controller snapshots the queue position before the clip and resumes
+  at that track after `say` returns (seek to the captured position;
+  falls back to start-of-track if the seek fails). For radio streams,
+  one-shot `play_url` calls, or a worker-engine playlist, no
+  auto-resume occurs — the agent must capture `now_playing` first,
+  then `play_url` the original URL after `say` returns.
+- **`say("all")` leaves every speaker ungrouped after the clip.** The
+  implementation dissolves all groups, forms party mode, broadcasts the
+  clip, then dissolves again — no group reconstruction. If the speakers
+  were in custom groups before the announcement, those groups are gone;
+  the agent must re-group them explicitly.
 - **`resume`/`pause` only work for queue-based playback**, not for
   radio streams or one-shot `play_url` calls. After `stop` on a
   stream, you have to `play_url` again to restart it.
@@ -245,24 +261,43 @@ Read these before you wire the server into an agent — they save real time.
 - **In-memory only.** Playlists vanish on server restart. No
   persistence. Treat them as scratch space for the agent within a
   single conversation/session.
-- **Per-speaker, not per-coordinator.** A playlist is keyed by the
-  speaker the agent picked when calling `playlist_play(speaker, ...)`.
-  The playlist follows that speaker's group coordinator if the group
-  changes — but you can't have the same playlist running on two
-  speakers in different groups simultaneously (yet — workaround:
-  group them first, then play once on the coordinator).
+- **Two engines; routing is automatic.** `playlist_play` inspects the
+  playlist URLs and picks the engine:
+  - **Native Sonos queue** (`engine: "native_queue"`) — all URLs are
+    external (not served by this MCP process). Items are bulk-loaded
+    into the speaker's hardware queue. The speaker advances tracks
+    independently; playback **survives an MCP restart or reap**.
+    `playlist_status`, `playlist_next`, `playlist_previous`, and
+    `playlist_stop` drive the live coordinator directly — they work
+    even after a reap (operating on whatever the coordinator is
+    currently playing).
+  - **Worker thread** (`engine: "worker"`) — any URL is MCP-hosted
+    (served by this process's audio HTTP server) or the server's
+    host/port isn't yet known. An in-process background thread drives
+    `play_uri` for each track. Playback stops when the MCP process
+    exits or is reaped.
+- **The Sonos app shows an empty queue for native-queue items.** Items
+  injected via `add_multiple_to_queue` appear in the hardware queue
+  but not in the Sonos app's "Queue" view. This is a firmware display
+  artefact — playback is unaffected.
+- **Per-speaker, not per-coordinator.** A session is keyed by the
+  speaker the agent named. The worker re-resolves the group
+  coordinator on every track so the playlist follows the speaker
+  through grouping changes — but you can't run the same playlist on
+  two speakers in different groups simultaneously (workaround: group
+  them first, then play once on the coordinator).
 - **At most one playlist per speaker.** Calling `playlist_play` on a
   speaker that already has an active session stops the old one and
   starts the new.
-- **External commands end the playlist.** Any `say`, `play_url`,
-  manual Sonos-app interaction, or other source taking over the
-  speaker is detected by the worker (different URI playing) and the
-  playlist exits cleanly. There's no auto-resume; the agent must
-  re-call `playlist_play(start_index=...)` to pick up where it left
-  off.
-- **Polling-based.** The worker polls transport state every 500 ms.
-  Track-to-track transitions have ~500 ms of dead air. Fine for the
-  agent's use case, suboptimal for gapless playback.
+- **External commands end a worker session.** For the worker engine,
+  `say`, `play_url`, manual Sonos-app interaction, or any other source
+  taking over the speaker is detected (different URI playing) and the
+  worker exits cleanly. For the native-queue engine, control tools
+  act on whatever the coordinator is currently playing — there's no
+  worker to evict.
+- **Polling-based (worker engine).** The worker polls transport state
+  every 500 ms. Track-to-track transitions have ~500 ms of dead air.
+  Fine for the agent's use case, suboptimal for gapless playback.
 
 ### Operational
 
@@ -295,7 +330,8 @@ no Sonos cloud involved.
 - Playlists (in-memory, named):
   `playlist_create`, `playlist_add(name, url, title?)`,
   `playlist_add_many(name, items[])`, `playlist_play(speaker, name,
-  shuffle?, start_index?)`, `playlist_next`, `playlist_previous`,
+  shuffle?, start_index?)` → returns `engine` (`native_queue` or
+  `worker`), `playlist_next`, `playlist_previous`,
   `playlist_stop`, `playlist_status`, plus
   `playlist_list`/`get`/`remove`/`clear`/`delete`
 
@@ -330,11 +366,19 @@ no Sonos cloud involved.
 7. "Stop everything": enumerate groups via `list_groups`, call `stop`
    on each coordinator.
 
-8. `say` interrupts whatever was playing. If the user was listening to
-   music and asks for an announcement, capture `now_playing` first,
-   make the announcement, then `play_url` the same URI again to resume.
-   `resume`/`pause` only work for queue-based playback, not radio
-   streams.
+8. `say` and `play_url` interrupt whatever was playing and then
+   **auto-resume** (mid-track, best-effort) if the speaker had a native
+   Sonos queue active: the server snapshots the queue position, plays
+   the clip, then resumes at that track (seeking to the captured
+   position; falls back to start-of-track if the host rejects the seek).
+   No manual capture/replay needed for the native-queue path.
+
+   If the playlist used the **worker engine** (`engine: "worker"` in
+   `playlist_play` response) — or if there was no active playlist — the
+   auto-resume does not apply. For radio/URL playback or worker-engine
+   playlists: capture `now_playing` before the announcement, then
+   `play_url` the same URI again afterward. `resume`/`pause` only work
+   for queue-based playback, not radio streams.
 
 9. Tool responses already include resulting state. Don't follow up
    with `now_playing` to confirm — read the response.
@@ -342,19 +386,27 @@ no Sonos cloud involved.
 10. For multi-song playback, use playlists. Build with
     `playlist_create` + `playlist_add_many` (one call with all items
     beats N individual `playlist_add` calls), then `playlist_play`.
-    The server plays items back-to-back in a background thread and
-    returns immediately — poll `playlist_status` to see which track
-    is current. Playlists are in-memory only (no persistence across
-    server restart), and adding items to a playlist that's already
-    playing is fine — newly-appended tracks will be picked up when
-    the worker reaches them.
+    The response includes `engine: "native_queue"` or `engine:
+    "worker"` — check this key. With `native_queue` (all-external
+    URLs), playback lives on the speaker hardware and survives an MCP
+    restart or reap; `playlist_status`, `playlist_next`,
+    `playlist_previous`, and `playlist_stop` work even after a reap
+    by driving the live coordinator directly. With `worker`, playback
+    runs in-process and stops if the MCP server exits. Playlists are
+    in-memory only (no persistence across server restart), and adding
+    items to a playlist that's already playing is fine — newly-appended
+    tracks will be picked up when the worker reaches them.
 
-11. Playlists cleanly end when interrupted. If the user calls `say`,
-    `play_url`, or `stop` on a speaker that has an active playlist,
-    the playlist worker detects the takeover and exits. Don't try
-    to "pause" a playlist by calling Sonos `pause` — call
-    `playlist_stop` and remember the index if you want to resume
-    later via `playlist_play(start_index=N)`.
+11. Playlist control after interruption differs by engine. For the
+    **worker engine**: `say`, `play_url`, or external Sonos-app
+    interaction terminates the worker (it detects the takeover via URI
+    mismatch and exits). Call `playlist_stop` rather than Sonos
+    `pause` — use `playlist_play(start_index=N)` to resume from a
+    saved index. For the **native-queue engine**: there is no worker to
+    evict; control tools (`playlist_stop`, `playlist_next`, etc.) drive
+    the live coordinator directly. `say` / `play_url` will auto-resume
+    the queue mid-track (best-effort) after the clip finishes — you do
+    not need to manually restart the playlist.
 
 ## What NOT to do
 
@@ -386,11 +438,20 @@ mcp_sonos/
 ├── controller.py   # All business logic; MCP-agnostic, unit-testable
 ├── speakers.py     # Discovery (SSDP + SONOS_IPS) + name resolution
 ├── audio_host.py   # Persistent HTTP server hosting TTS / staged files
+├── playlists.py    # Named playlists + two-engine playback (native queue / worker)
 └── tts.py          # Piper voice loading + content-hash cache
 ```
 
 - One `SonosController` per process. Audio HTTP server starts on
   controller init and stays up for the life of the server.
+- Playlist routing: `playlist_play` checks whether any URL is
+  MCP-hosted (same `host_ip:audio_port` as this server). All-external
+  → native Sonos queue (survives restarts). Any local/MCP-hosted URL
+  → worker thread (requires this process to stay alive).
+- `say()` and `play_url()` auto-resume a native queue mid-track
+  (best-effort) when a queue was active before the clip started:
+  snapshot `playlist_position`, play clip, then `play_from_queue` +
+  seek. Seek failure falls back to start-of-track silently.
 - Piper voice loaded lazily on first `say()`, cached process-wide.
 - TTS output cached by `(text, voice, length_scale)` hash — same
   announcement never re-synthesizes.
@@ -408,8 +469,10 @@ Hardening ideas for when this gets picked back up:
   "play the radio station I favorited."
 - **ICY metadata parsing** so `now_playing` for radio streams returns
   the actual song title.
-- **`say` with snapshot/restore** — capture transport state before,
-  restore after. Would make announcements over music transparent.
+- ~~**`say` with snapshot/restore**~~ — **Done.** `say` and
+  `play_url` now snapshot a native Sonos queue before the clip and
+  resume mid-track (best-effort) after it. See `_with_queue_resume`
+  in `controller.py`.
 - **TTS cache eviction** (LRU or age-based) so `/tmp/mcp-sonos-audio/`
   doesn't grow forever.
 - **Authenticated audio host** so the served files aren't readable by

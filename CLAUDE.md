@@ -23,8 +23,11 @@ uvx --from git+https://github.com/msieurthenardier/mcp-sonos mcp-sonos
 # Smoke tests against real hardware (in-process FastMCP Client; same
 # code path the agent uses, no stdio in the middle). Need a reachable
 # Sonos household on the LAN.
-.venv/bin/python smoke_test.py            # basic tools: say, list, etc.
-.venv/bin/python playlist_smoke.py        # playlists: natural end, skip, stop
+SONOS_IPS=192.168.1.51,... .venv/bin/python smoke_test.py            # basic tools: say, list, etc.
+SONOS_IPS=192.168.1.51,... .venv/bin/python playlist_smoke.py        # playlists: natural end, skip, stop
+SONOS_IPS=192.168.1.51,... .venv/bin/python queue_smoke.py           # native-queue engine: play, next, stop
+SONOS_IPS=192.168.1.51,... .venv/bin/python reap_smoke.py --load     # reap-survival phase 1: loads queue + exits (= the reap)
+SONOS_IPS=192.168.1.51,... .venv/bin/python reap_smoke.py --control  # reap-survival phase 2: fresh process drives the live queue
 
 # Build wheel (sanity check on packaging changes)
 .venv/bin/pip install build
@@ -64,17 +67,99 @@ plays HTTP URIs, not local paths, so we host the TTS cache (and any
 because the Windows Firewall rule guarding inbound traffic into WSL2
 covers exactly that range — don't widen without updating the rule.
 
-**`mcp_sonos/playlists.py`** — in-memory named playlists with one
-background worker thread per active session.
+**`mcp_sonos/playlists.py`** — in-memory named playlists with a
+two-engine playback system.
 
-Critical design decision: **sessions are keyed by the originally-named
-speaker's UID, NOT the coordinator's UID.** The worker re-resolves the
-group coordinator on every track iteration so the playlist follows
-the speaker through grouping changes. Keying by coordinator UID
-breaks the moment someone groups the speaker (the lookup goes to a
-different key) — this was the first design and it crashed
-immediately during multi-test runs. If you refactor this, preserve
-the speaker-UID keying invariant.
+### Two-engine architecture
+
+`playlist_play` routes to one of two engines based on URL classification:
+
+- **Native Sonos queue** (`engine: "native_queue"`) — used when ALL
+  playlist URLs are external (not served by this MCP process's audio
+  HTTP server). Items are bulk-loaded into the hardware queue via
+  `add_multiple_to_queue`. The speaker handles track advancement;
+  playback survives an MCP restart or reap. Control tools
+  (`playlist_status`, `playlist_next`, `playlist_previous`,
+  `playlist_stop`) drive the live coordinator directly after a reap
+  (post-reap identity: tools act on whatever the coordinator is
+  currently playing).
+- **Worker thread** (`engine: "worker"`) — used when any URL matches
+  the MCP audio server's `host_ip:audio_port`, or when `host_ip`/
+  `audio_port` are not set (conservative fallback). An in-process
+  background thread drives `play_uri` for each track. Playback stops
+  when the MCP process exits.
+
+Routing rule: `any_mcp_hosted(urls, host_ip, audio_port)` returns
+`True` → worker engine; all-external (or coordinates unknown) →
+native-queue engine (or worker fallback if coordinates unknown).
+
+### PlaylistManager dependency injection
+
+`PlaylistManager.__init__` takes four parameters:
+
+- `resolve_coordinator(name) -> (SoCo, SoCo)` — injected so tests
+  don't pull in the full `SonosController`.
+- `host_ip: str` — the MCP audio server's advertised LAN IP. Used by
+  `play()` to classify URLs. Empty string → worker fallback.
+- `audio_port: int` — the MCP audio server's TCP port. Zero → worker
+  fallback.
+- `invalidate_speakers_cache: Callable[[], None]` — resets the
+  speakers cache TTL so the next `_resolve_coordinator` forces a fresh
+  discovery. Called before a stale-coordinator retry. Defaults to
+  no-op so tests don't break.
+
+### Engine discriminator
+
+`playlist_play` (via both `_play_via_queue` and `_play_via_worker`)
+returns `engine: "native_queue"` or `engine: "worker"` in its result
+dict. Callers (including the agent) should read this key to know which
+control path is active after a reap.
+
+### QUEUE_PARENT_ID
+
+```python
+QUEUE_PARENT_ID = "A:TRACKS"
+```
+
+Used as the `parent_id` for all `DidlMusicTrack` items injected via
+`add_multiple_to_queue`. **Must NOT be `"-1"`** — Leg 1 hardware
+testing (Flight 1) confirmed that `parent_id="-1"` causes the Sonos
+firmware to discard the title field; any other value preserves it.
+`"A:TRACKS"` is the conventional music-library container.
+
+### Caveats (behavior that surprises)
+
+- **`status().title` is present but unreliable for queued items.**
+  The firmware may return the URI stem, a blank string, or the
+  correct title depending on firmware version and how the item was
+  injected. Do not assert on `title` in tests or agent logic — prefer
+  `artist` and `album`, which are more reliably populated.
+- **`say("all")` leaves all speakers ungrouped after the clip.**
+  `_say_all` dissolves all groups, forms party mode, plays the clip,
+  then dissolves again. No group reconstruction occurs. This is
+  state-destructive: any custom groupings before the call are gone.
+  The agent must re-group speakers explicitly if needed.
+- **`next`/`previous` no-session are best-effort (no stale-coord
+  retry).** When `next_track` / `previous_track` are called with no
+  active worker session, they call `coord.next()` / `coord.previous()`
+  directly and swallow any `SoCoSlaveException`. Unlike `say`, there
+  is no invalidate-and-retry on slave exception — an advance during
+  group churn may be silently lost.
+- **`play_url` blocks until clip-end** (or
+  `PLAY_URL_RESUME_TIMEOUT_SECONDS` elapses — default 3600 s). The
+  method calls `_with_queue_resume`, which polls `_wait_until_stopped`
+  before returning. `play_file` inherits this behavior because it
+  delegates to `play_url`.
+
+### Session keying (worker engine)
+
+Sessions are keyed by the originally-named speaker's UID, NOT the
+coordinator's UID. The worker re-resolves the group coordinator on
+every track iteration so the playlist follows the speaker through
+grouping changes. Keying by coordinator UID breaks the moment someone
+groups the speaker (the lookup goes to a different key) — this was
+the first design and it crashed immediately during multi-test runs.
+If you refactor, preserve the speaker-UID keying invariant.
 
 Worker signals: `stop_event`, `skip_event`, `back_event` are
 `threading.Event`s. Worker polls them at 4 Hz inside its inner wait
@@ -82,7 +167,7 @@ loop. External takeover (a different URI playing) is detected by
 comparing `current_track_info().uri` to the item URL — when they
 diverge during a `PLAYING` state, the worker exits cleanly. This is
 how `say`, `play_url`, manual Sonos-app interaction, etc. reliably
-end a playlist without explicit coordination.
+end a worker-engine playlist without explicit coordination.
 
 **`mcp_sonos/tts.py`** — Piper voice loaded lazily, cached
 process-wide. Voice ONNX files (~60 MB) auto-download to

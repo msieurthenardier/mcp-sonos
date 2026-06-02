@@ -173,9 +173,10 @@ class SonosController:
         Blocking contract (changed in Leg 4): this method now BLOCKS until
         the clip finishes (or PLAY_URL_RESUME_TIMEOUT_SECONDS elapses), then
         attempts to resume a native-queue session that was active before the
-        clip started.  If the queue was playing, playback resumes at the
-        start of the interrupted track; return value reflects the post-resume
-        state (queue track, not the clip).
+        clip started.  If the queue was playing, playback resumes mid-track
+        (best-effort; falls back to start-of-track if the host rejects the
+        seek); return value reflects the post-resume state (queue track, not
+        the clip).
 
         Resume is best-effort: if the coordinator becomes unreachable while
         the clip is playing (e.g. MCP is reaped and restarted), the clip
@@ -356,8 +357,12 @@ class SonosController:
             for m in members:
                 m.volume = volume
 
-        # Capture a mutable reference so the lambda below can re-assign it
-        # when a stale-coordinator retry returns a fresh coord.
+        # NOTE: coord_holder is a mutable single-cell list box. Python closures
+        # capture variable names, not values, so a plain `coord = ...` inside
+        # `_play_clip` would only update a local variable invisible to the
+        # outer scope. By boxing `coord` in a one-element list, the inner
+        # function can hand back a replaced coordinator (from the stale-coord
+        # retry) and the outer scope picks it up via `coord_holder[0]`.
         coord_holder: list[SoCo] = [coord]
 
         def _play_clip() -> None:
@@ -481,6 +486,12 @@ class SonosController:
                         coord.seek(saved_position)
                     except Exception:
                         pass  # start-of-track fallback: swallow seek failures
+                # NOTE: play_mode is not restored if play_from_queue itself
+                # fails — intentional. If we can't resume the queue position
+                # there is no queue track to restore play_mode onto, so
+                # restoring it would set mode on whatever happens to be
+                # playing (potentially someone else's content). The outer
+                # try/except swallows the entire resume failure as best-effort.
                 coord.play_mode = saved_play_mode
             except Exception:
                 pass  # best-effort: swallow resume failures

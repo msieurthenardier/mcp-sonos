@@ -72,11 +72,12 @@ audio host into a persistent sidecar — out of scope here).
 - [ ] Q6 — `say`/`play_url` interaction with an active queue is defined and
   documented (interrupt vs. resume vs. end), and grouping behavior of the
   queue path is documented
-- [ ] Q7 — A reader or agent can correctly understand and drive the queue
+- [x] Q7 — A reader or agent can correctly understand and drive the queue
   path from the docs alone: the README playlist section + limitations,
   CLAUDE.md architecture notes, and the agent system prompt all describe the
   queue-backed behavior (including reap-survival and the local-file
   fallback), and a smoke test exercises the queue path
+  — **Flight 3** (README/CLAUDE.md/system-prompt/.env + `reap_smoke.py`)
 
 ## Verification Approach
 - **Automated tests (regular pytest, run locally)** cover everything the MCP
@@ -156,5 +157,6 @@ agentic host that reaps the MCP on inactivity. No external users.
   `playlist_status`/`next`/`previous`/`stop` against live speaker state, plus
   `say`/`play_url` takeover and grouping semantics
   — **landed** (Q4 + Q6; reap+respawn control & say-resume mid-track proven on hardware)
-- [ ] Flight 3: Documentation + smoke coverage — README/CLAUDE.md/system
+- [x] Flight 3: Documentation + smoke coverage — README/CLAUDE.md/system
   prompt alignment and a queue-path smoke test
+  — **landed** (Q7; docs across README/CLAUDE.md/system-prompt/.env + reap-survival smoke)

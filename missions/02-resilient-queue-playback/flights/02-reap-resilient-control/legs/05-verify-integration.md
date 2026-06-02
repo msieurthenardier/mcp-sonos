@@ -26,7 +26,8 @@ reap+respawn (Q4) and that `say`/`play_url` resume the queue (Q6).
       (artist/album, engine native_queue), `playlist_next` advances, `playlist_stop`
       stops (queue kept)
 - [ ] **Q6 resume HAT**: with a queue playing, `say` (and `play_url`) plays the clip and
-      the queue resumes at start-of-track (operator confirms by ear)
+      the queue resumes mid-track, best-effort (operator confirms by ear; falls back to
+      start-of-track if the host rejects the seek)
 - [ ] Findings recorded in the flight log; gate any divergence
 
 ## Verification Steps (operator-run, FD-guided)

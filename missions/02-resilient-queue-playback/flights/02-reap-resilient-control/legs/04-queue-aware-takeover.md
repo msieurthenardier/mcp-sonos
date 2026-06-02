@@ -11,8 +11,8 @@
 
 ## Objective
 Make `say` and single-coordinator `play_url` snapshot an active native queue, play the
-clip, then resume the queue at start-of-track — so an announcement no longer silently
-ends queue playback. (Q6)
+clip, then resume the queue mid-track (best-effort; falls back to start-of-track if the
+host rejects the seek) — so an announcement no longer silently ends queue playback. (Q6)
 
 ## Context
 - Leg 3 (hardware gate) proved the recipe: `play_uri` preserves the queue; resume via
