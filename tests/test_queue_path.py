@@ -328,41 +328,218 @@ def test_queue_play_evicts_worker_before_queue_load():
 
 
 # ---------------------------------------------------------------------------
-# Graceful no-session: playlist_next / playlist_previous (scope boundary)
+# Live-coordinator control: no-session path (Leg 1, Flight 2)
 # ---------------------------------------------------------------------------
 
-def test_playlist_next_no_session_returns_graceful_dict():
-    """playlist_next returns graceful dict instead of raising when no session."""
+def test_next_track_no_session_invokes_coord_next():
+    """next_track with no session calls coord.next() and returns live track info."""
     speaker = SoCoFake(player_name="Kitchen", uid="RINCON_NOSESS001")
+    speaker._track = {
+        "uri": "http://cdn.example.com/track1.mp3",
+        "title": "Track One",
+        "artist": "Artist A",
+        "album": "Album X",
+        "position": "0:00:05",
+        "duration": "0:03:00",
+        "playlist_position": "1",
+    }
+    speaker._transport = {"current_transport_state": "PLAYING"}
     mgr = _make_manager(speaker, _HOST_IP, _AUDIO_PORT)
 
     result = mgr.next_track("Kitchen")
 
-    assert result.get("controllable") is False
+    assert speaker.next_call_count == 1, "coord.next() must be invoked"
     assert result.get("engine") == "native_queue"
+    assert result.get("artist") == "Artist A"
+    assert result.get("album") == "Album X"
     assert "speaker" in result
+    assert "controllable" not in result
 
 
-def test_playlist_previous_no_session_returns_graceful_dict():
-    """playlist_previous returns graceful dict instead of raising when no session."""
+def test_previous_track_no_session_invokes_coord_previous():
+    """previous_track with no session calls coord.previous() and returns live track info."""
     speaker = SoCoFake(player_name="Kitchen", uid="RINCON_NOSESS002")
+    speaker._track = {
+        "uri": "http://cdn.example.com/track0.mp3",
+        "title": "Track Zero",
+        "artist": "Artist B",
+        "album": "Album Y",
+        "position": "0:00:02",
+        "duration": "0:04:00",
+        "playlist_position": "0",
+    }
+    speaker._transport = {"current_transport_state": "PLAYING"}
     mgr = _make_manager(speaker, _HOST_IP, _AUDIO_PORT)
 
     result = mgr.previous_track("Kitchen")
 
-    assert result.get("controllable") is False
+    assert speaker.previous_call_count == 1, "coord.previous() must be invoked"
     assert result.get("engine") == "native_queue"
+    assert result.get("artist") == "Artist B"
+    assert result.get("album") == "Album Y"
     assert "speaker" in result
+    assert "controllable" not in result
 
 
-def test_playlist_stop_no_session_does_not_raise():
-    """playlist_stop is already graceful (no change needed); confirm no regression."""
+def test_stop_no_session_calls_coord_stop_and_does_not_clear_queue():
+    """stop with no session calls coord.stop(); queue is left intact."""
     speaker = SoCoFake(player_name="Kitchen", uid="RINCON_NOSESS003")
+    # Pre-populate a queue to verify it's not cleared.
+    # The fake _queue is just a list, so any items work.
+    speaker._queue = ["item1", "item2"]
     mgr = _make_manager(speaker, _HOST_IP, _AUDIO_PORT)
 
     result = mgr.stop("Kitchen")
 
+    assert speaker.stop_call_count == 1, "coord.stop() must be invoked"
+    assert result.get("stopped") is True
+    assert result.get("engine") == "native_queue"
+    assert "speaker" in result
+    # Queue must not be cleared.
+    assert len(speaker._queue) == 2, "stop must not clear the native queue"
+
+
+def test_status_no_session_returns_live_state():
+    """status with no session reads live transport/track state from the coordinator."""
+    speaker = SoCoFake(player_name="Kitchen", uid="RINCON_NOSESS004")
+    speaker._transport = {"current_transport_state": "PLAYING"}
+    speaker._track = {
+        "uri": "http://cdn.example.com/song.mp3",
+        "title": "My Song",
+        "artist": "Cool Band",
+        "album": "Best Album",
+        "position": "0:01:30",
+        "duration": "0:04:20",
+        "playlist_position": "2",
+    }
+    mgr = _make_manager(speaker, _HOST_IP, _AUDIO_PORT)
+
+    result = mgr.status("Kitchen")
+
+    assert result.get("engine") == "native_queue"
+    assert result.get("state") == "PLAYING"
+    assert result.get("artist") == "Cool Band"
+    assert result.get("album") == "Best Album"
+    assert result.get("position") == "0:01:30"
+    assert result.get("duration") == "0:04:20"
+    assert result.get("uri") == "http://cdn.example.com/song.mp3"
+    assert result.get("playlist_position") == "2"
+    assert "speaker" in result
+
+
+def test_status_no_session_stopped_returns_idle():
+    """status with no session returns idle dict when transport is STOPPED."""
+    speaker = SoCoFake(player_name="Kitchen", uid="RINCON_NOSESS005")
+    # Default state: STOPPED, empty uri
+    mgr = _make_manager(speaker, _HOST_IP, _AUDIO_PORT)
+
+    result = mgr.status("Kitchen")
+
     assert result.get("running") is False
+    assert result.get("engine") == "native_queue"
+    assert "speaker" in result
+
+
+def test_next_track_no_session_swallows_soco_error():
+    """next_track swallows SoCo errors and returns a sensible dict."""
+    speaker = SoCoFake(player_name="Kitchen", uid="RINCON_NOSESS006")
+    mgr = _make_manager(speaker, _HOST_IP, _AUDIO_PORT)
+
+    # Patch next() to raise.
+    def bad_next():
+        raise RuntimeError("SoCo UPnP error: end of queue")
+    speaker.next = bad_next  # type: ignore
+
+    result = mgr.next_track("Kitchen")
+
+    # Must not raise; returns a dict with engine key.
+    assert result.get("engine") == "native_queue"
+    assert "speaker" in result
+
+
+def test_worker_session_path_unchanged_for_next():
+    """Worker-session path: next_track signals skip_event, not coord.next()."""
+    import mcp_sonos.playlists as playlists_mod
+
+    speaker = SoCoFake(player_name="Kitchen", uid="RINCON_SESS001")
+    mgr = _make_manager(speaker, _HOST_IP, _AUDIO_PORT)
+
+    # Start a worker session via a TTS (MCP-hosted) playlist.
+    mgr.create("worker_pl")
+    mgr.add_many("worker_pl", [{"url": _MCP_URL, "title": "TTS"}])
+    old_interval = playlists_mod.POLL_INTERVAL
+    playlists_mod.POLL_INTERVAL = 0.01
+    try:
+        mgr.play("Kitchen", "worker_pl")
+        assert speaker.uid in mgr._sessions
+
+        result = mgr.next_track("Kitchen")
+
+        # Must use worker signaling, not coord.next().
+        assert result.get("signaled") == "next"
+        assert result.get("engine") == "worker"
+        assert speaker.next_call_count == 0, "coord.next() must NOT be called on worker path"
+    finally:
+        playlists_mod.POLL_INTERVAL = old_interval
+        try:
+            mgr.stop("Kitchen")
+        except Exception:
+            pass
+
+
+def test_worker_session_path_unchanged_for_previous():
+    """Worker-session path: previous_track signals back_event, not coord.previous(), and returns engine:'worker'."""
+    import mcp_sonos.playlists as playlists_mod
+
+    speaker = SoCoFake(player_name="Kitchen", uid="RINCON_SESS002")
+    mgr = _make_manager(speaker, _HOST_IP, _AUDIO_PORT)
+
+    # Start a worker session via a TTS (MCP-hosted) playlist.
+    mgr.create("worker_prev_pl")
+    mgr.add_many("worker_prev_pl", [{"url": _MCP_URL, "title": "TTS"}])
+    old_interval = playlists_mod.POLL_INTERVAL
+    playlists_mod.POLL_INTERVAL = 0.01
+    try:
+        mgr.play("Kitchen", "worker_prev_pl")
+        assert speaker.uid in mgr._sessions
+
+        result = mgr.previous_track("Kitchen")
+
+        # Must use worker signaling (back_event), not coord.previous().
+        assert result.get("signaled") == "previous"
+        assert result.get("engine") == "worker"
+        assert speaker.previous_call_count == 0, "coord.previous() must NOT be called on worker path"
+    finally:
+        playlists_mod.POLL_INTERVAL = old_interval
+        try:
+            mgr.stop("Kitchen")
+        except Exception:
+            pass
+
+
+def test_worker_session_stop_returns_engine_worker():
+    """Worker-session path: stop signals stop_event and returns engine:'worker'."""
+    import mcp_sonos.playlists as playlists_mod
+
+    speaker = SoCoFake(player_name="Kitchen", uid="RINCON_SESS003")
+    mgr = _make_manager(speaker, _HOST_IP, _AUDIO_PORT)
+
+    # Start a worker session via a TTS (MCP-hosted) playlist.
+    mgr.create("worker_stop_pl")
+    mgr.add_many("worker_stop_pl", [{"url": _MCP_URL, "title": "TTS"}])
+    old_interval = playlists_mod.POLL_INTERVAL
+    playlists_mod.POLL_INTERVAL = 0.01
+    try:
+        mgr.play("Kitchen", "worker_stop_pl")
+        assert speaker.uid in mgr._sessions
+
+        result = mgr.stop("Kitchen")
+
+        # Must signal stop and return engine:'worker'; also stops the coordinator.
+        assert result.get("stopped") is True
+        assert result.get("engine") == "worker"
+    finally:
+        playlists_mod.POLL_INTERVAL = old_interval
 
 
 # ---------------------------------------------------------------------------
@@ -403,3 +580,111 @@ def test_literal_space_in_url_gets_encoded():
     resource_uri = speaker._queue[0].resources[0].uri
     assert " " not in resource_uri, "literal space must be percent-encoded"
     assert "%20" in resource_uri, "literal space must be encoded as '%20'"
+
+
+# ---------------------------------------------------------------------------
+# Leg 2: play_mode-before-play_from_queue ordering invariant
+# ---------------------------------------------------------------------------
+
+def test_play_mode_set_before_play_from_queue():
+    """play_mode must be set BEFORE play_from_queue is called.
+
+    Swapping the order would be a real bug: Sonos applies the play mode
+    to whatever is currently in the queue *at the moment play_from_queue
+    runs*, so setting play_mode after would mean playback starts in the
+    wrong mode and only takes effect on the next track.
+    """
+    speaker = SoCoFake(player_name="Kitchen", uid="RINCON_ORD001")
+    mgr = _make_manager(speaker, _HOST_IP, _AUDIO_PORT)
+
+    _external_playlist(mgr, "ordering_pl", [
+        {"url": "http://cdn.example.com/t1.mp3", "title": "T1"},
+        {"url": "http://cdn.example.com/t2.mp3", "title": "T2"},
+    ])
+
+    mgr.play("Kitchen", "ordering_pl")
+
+    # Both tokens must be present.
+    assert "play_mode" in speaker.call_log, "play_mode was never set"
+    assert "play_from_queue" in speaker.call_log, "play_from_queue was never called"
+
+    pm_idx = speaker.call_log.index("play_mode")
+    pfq_idx = speaker.call_log.index("play_from_queue")
+    assert pm_idx < pfq_idx, (
+        f"Ordering invariant violated: play_mode (pos {pm_idx}) must precede "
+        f"play_from_queue (pos {pfq_idx}) in the call log {speaker.call_log!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Leg 2: SoCoSlaveException retry flushes the speakers cache
+# ---------------------------------------------------------------------------
+
+def test_slave_exception_retry_flushes_cache_and_succeeds():
+    """On SoCoSlaveException, invalidate_speakers_cache is called before re-resolving.
+
+    The retry must:
+    1. Call invalidate_speakers_cache() exactly once.
+    2. Re-resolve the coordinator (a second speaker is returned the second time).
+    3. Call play_from_queue on the fresh coordinator; the whole play() succeeds.
+    """
+    from soco.exceptions import SoCoSlaveException
+
+    stale_coord = SoCoFake(player_name="Kitchen", uid="RINCON_STALE001")
+    fresh_coord = SoCoFake(player_name="Kitchen", uid="RINCON_FRESH001")
+
+    # play() itself calls _resolve_coordinator once to get the speaker, then
+    # _play_via_queue calls it a second time to get the coordinator.  Both of
+    # those initial calls must return stale_coord so the coordinator handed to
+    # _play_from_queue_with_stale_coord_retry is stale.  The third call (the
+    # retry inside the exception handler) must return fresh_coord.
+    resolve_calls: list[str] = []
+
+    def resolve(name: str) -> tuple:
+        resolve_calls.append(name)
+        if len(resolve_calls) <= 2:
+            return stale_coord, stale_coord
+        return fresh_coord, fresh_coord
+
+    # stale_coord.play_from_queue raises SoCoSlaveException on its first call.
+    stale_coord.play_from_queue_raise = SoCoSlaveException("not the coordinator")
+
+    # Pre-populate stale_coord queue so add_multiple_to_queue records items there.
+    # (The queue path clears + loads into whatever coord is returned first.)
+    # We need both fakes to have queue support; stale_coord does the queue ops,
+    # fresh_coord only gets play_from_queue.
+
+    invalidate_calls: list[int] = []
+
+    def spy_invalidate() -> None:
+        invalidate_calls.append(1)
+
+    mgr = PlaylistManager(
+        resolve_coordinator=resolve,
+        host_ip=_HOST_IP,
+        audio_port=_AUDIO_PORT,
+        invalidate_speakers_cache=spy_invalidate,
+    )
+
+    _external_playlist(mgr, "retry_pl", [
+        {"url": "http://cdn.example.com/r1.mp3", "title": "R1"},
+    ])
+
+    result = mgr.play("Kitchen", "retry_pl")
+
+    # Play succeeded.
+    assert result["engine"] == "native_queue"
+    assert result["started"] is True
+
+    # invalidate_speakers_cache was called exactly once during the retry.
+    assert len(invalidate_calls) == 1, (
+        f"Expected invalidate_speakers_cache called once, got {len(invalidate_calls)}"
+    )
+
+    # Re-resolution happened (resolve called more than once: initial + retry).
+    assert len(resolve_calls) >= 2, (
+        f"Expected coordinator re-resolved on retry, got {len(resolve_calls)} resolve calls"
+    )
+
+    # The fresh coordinator's play_from_queue succeeded (it's in PLAYING state).
+    assert fresh_coord._transport["current_transport_state"] == "PLAYING"

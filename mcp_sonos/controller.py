@@ -99,6 +99,7 @@ class SonosController:
             resolve_coordinator=self._resolve_coordinator,
             host_ip=self._host_ip,
             audio_port=self.audio.port,
+            invalidate_speakers_cache=lambda: setattr(self, "_speakers_ts", 0.0),
         )
 
     # ---- discovery / lookup -------------------------------------------------
