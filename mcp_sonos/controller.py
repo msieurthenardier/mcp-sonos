@@ -10,12 +10,16 @@ from __future__ import annotations
 import os
 import tempfile
 import time
+import urllib.error
+import urllib.request
+from http.client import RemoteDisconnected
 from pathlib import Path
 from typing import Callable
 
 from soco import SoCo
 
 from . import speakers as sp
+from ._retry import with_stale_coord_retry
 from ._urls import validate_http_url
 from .audio_host import AudioHost
 from .playlists import PlaylistManager
@@ -34,6 +38,41 @@ TTS_TIMEOUT_SECONDS = 30
 PLAY_URL_RESUME_TIMEOUT_SECONDS = int(
     os.environ.get("PLAY_URL_RESUME_TIMEOUT_SECONDS", "3600")
 )
+
+# Sonos has no documented UPnP/SoCo reboot action. The firmware exposes an
+# undocumented HTTP endpoint on the device control port (1400); hitting it
+# triggers a reboot. The device tears down the connection as it goes down, so
+# a dropped/reset/timed-out request is the EXPECTED success signal — only a
+# clean refusal (nothing listening) or a DNS failure means the command never
+# landed. Behaviour is firmware-dependent and not exercised by the unit suite;
+# validate against hardware via a smoke test.
+SONOS_CONTROL_PORT = 1400
+REBOOT_TIMEOUT_SECONDS = 5
+
+
+def _reboot_via_http(ip: str, timeout: float = REBOOT_TIMEOUT_SECONDS) -> None:
+    """Issue the reboot request to a speaker's control port.
+
+    Returns normally if the reboot command was (best-effort) delivered —
+    including when the device drops the connection mid-flight. Raises
+    RuntimeError only when we can tell the command did not land.
+    """
+    url = f"http://{ip}:{SONOS_CONTROL_PORT}/reboot"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout):  # noqa: S310 (LAN device, fixed scheme)
+            return
+    except (RemoteDisconnected, ConnectionResetError, TimeoutError):
+        # Device went down before/while answering — that's the reboot.
+        return
+    except urllib.error.HTTPError:
+        # Reached the device and it answered (some firmware 3xx/4xx the page
+        # but still reboots). Treat as delivered.
+        return
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", exc)
+        if isinstance(reason, (RemoteDisconnected, ConnectionResetError, TimeoutError)):
+            return
+        raise RuntimeError(f"could not reach {url}: {reason}") from exc
 
 
 def _track_state(speaker: SoCo) -> dict:
@@ -110,6 +149,10 @@ class SonosController:
             audio_port=self.audio.port,
             invalidate_speakers_cache=lambda: setattr(self, "_speakers_ts", 0.0),
         )
+        # Injectable sleep for _say_all topology-settle; defaults to the real
+        # time.sleep so production behavior is unchanged.  Tests patch this to
+        # a no-op so the 1.0s settle doesn't dominate the suite wall-clock.
+        self._sleep = time.sleep
 
     # ---- discovery / lookup -------------------------------------------------
 
@@ -271,6 +314,23 @@ class SonosController:
         s.mute = False
         return {"speaker": s.player_name, "muted": s.mute}
 
+    # ---- maintenance --------------------------------------------------------
+
+    def reboot(self, name: str) -> dict:
+        """Reboot a single speaker via its firmware HTTP control port.
+
+        Per-speaker (not group-wide): only the named speaker restarts. The
+        speaker drops off the LAN for ~30-60s while it boots; callers should
+        refresh the speaker cache afterwards before driving it again. Best
+        effort — see `_reboot_via_http` for the delivery semantics.
+        """
+        s = self._resolve(name)
+        _reboot_via_http(s.ip_address)
+        # The cached SoCo for this speaker is about to become unreachable;
+        # force a fresh discovery on the next access (same idiom as elsewhere).
+        self._speakers_ts = 0.0
+        return {"speaker": s.player_name, "ip": s.ip_address, "rebooting": True}
+
     # ---- grouping -----------------------------------------------------------
 
     def group(self, coordinator: str, members: list[str]) -> dict:
@@ -366,8 +426,11 @@ class SonosController:
         coord_holder: list[SoCo] = [coord]
 
         def _play_clip() -> None:
-            coord_holder[0] = self._play_uri_with_stale_coord_retry(
-                target, coord_holder[0], url, title=f"Say: {text[:40]}"
+            coord_holder[0] = with_stale_coord_retry(
+                coord=coord_holder[0],
+                action=lambda c: c.play_uri(url, title=f"Say: {text[:40]}"),
+                invalidate=lambda: setattr(self, "_speakers_ts", 0.0),
+                resolve=lambda: self._resolve_coordinator(target)[1],
             )
 
         self._with_queue_resume(
@@ -382,34 +445,6 @@ class SonosController:
             "group_members": _group_members_of(coord),
             "text": text,
         }
-
-    def _play_uri_with_stale_coord_retry(
-        self, name: str, coord: SoCo, url: str, *, title: str
-    ) -> SoCo:
-        """Call `coord.play_uri`, recovering once from a stale-coordinator
-        view. The mission's `say()` coordinator bug surfaces when SoCo's
-        in-process `group.coordinator` view claims the speaker IS a
-        coordinator (so `_coordinator_of` returns it) but the Sonos
-        firmware rejects `play_uri` with `SoCoSlaveException`. The local
-        SoCo cache is stale relative to firmware reality; forcing a
-        re-discovery and re-resolving usually picks up the actual
-        coordinator. Returns the coordinator that succeeded so the caller
-        can keep using it for follow-up calls (e.g. `_wait_until_stopped`).
-        """
-        # Imported lazily so the test fakes don't have to satisfy the
-        # SoCo type hierarchy for the happy path.
-        from soco.exceptions import SoCoSlaveException
-
-        try:
-            coord.play_uri(url, title=title)
-            return coord
-        except SoCoSlaveException:
-            # Invalidate the speakers cache, force re-discovery, and
-            # retry once. If firmware still rejects, propagate.
-            self._speakers_ts = 0.0
-            _, fresh_coord = self._resolve_coordinator(name)
-            fresh_coord.play_uri(url, title=title)
-            return fresh_coord
 
     def _with_queue_resume(
         self,
@@ -506,13 +541,13 @@ class SonosController:
                 s.unjoin()
             except Exception:
                 pass
-        time.sleep(0.5)
+        self._sleep(0.5)
         if volume is not None:
             for s in speakers:
                 s.volume = volume
         coord = sorted(speakers, key=lambda s: s.player_name)[0]
         coord.partymode()
-        time.sleep(1.0)
+        self._sleep(1.0)
         coord.play_uri(url, title=f"Say-all: {text[:40]}")
         self._wait_until_stopped(coord)
         # Leave them ungrouped after the announcement.

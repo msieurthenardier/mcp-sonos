@@ -17,16 +17,8 @@ import time
 import pytest
 
 from mcp_sonos.playlists import PlaylistManager, QUEUE_PARENT_ID
+from tests._builders import _HOST_IP, _AUDIO_PORT, _MCP_URL, make_speaker_playing_queue, worker_session
 from tests._fakes import SoCoFake
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-_HOST_IP = "192.168.1.50"
-_AUDIO_PORT = 8080
-_MCP_URL = f"http://{_HOST_IP}:{_AUDIO_PORT}/tts/abc123.wav"
 
 
 def _make_manager(speaker: SoCoFake, host_ip: str = "", audio_port: int = 0) -> PlaylistManager:
@@ -274,24 +266,12 @@ def test_queue_play_evicts_worker_before_queue_load():
     We verify the invariant by patching coord.clear_queue to assert the worker
     thread has already exited at the moment the queue is cleared.
     """
-    import mcp_sonos.playlists as playlists_mod
-
     speaker = SoCoFake(player_name="Kitchen", uid="RINCON_EVICT001")
     mgr = _make_manager(speaker, _HOST_IP, _AUDIO_PORT)
 
-    # Start a worker session first (MCP-hosted → worker engine).
-    mgr.create("worker_pl")
-    mgr.add_many("worker_pl", [
-        {"url": _MCP_URL, "title": "TTS"},
-    ])
-    # Patch POLL_INTERVAL to keep worker from spinning during test.
-    old_interval = playlists_mod.POLL_INTERVAL
-    playlists_mod.POLL_INTERVAL = 0.01
-    try:
-        mgr.play("Kitchen", "worker_pl")  # worker engine: session in _sessions
+    with worker_session(mgr, speaker, playlist_name="worker_pl") as sess:
         assert speaker.uid in mgr._sessions
-        worker_session = mgr._sessions[speaker.uid]
-        worker_thread = worker_session.thread
+        worker_thread = sess.thread
 
         # Now start an all-external playlist — should evict the worker.
         mgr.create("queue_pl")
@@ -318,13 +298,6 @@ def test_queue_play_evicts_worker_before_queue_load():
         assert not clear_queue_worker_alive[0], (
             "DD-D violated: clear_queue was called while the worker thread was still alive"
         )
-    finally:
-        playlists_mod.POLL_INTERVAL = old_interval
-        # Belt-and-suspenders cleanup.
-        try:
-            mgr.stop("Kitchen")
-        except Exception:
-            pass
 
 
 # ---------------------------------------------------------------------------
@@ -333,17 +306,17 @@ def test_queue_play_evicts_worker_before_queue_load():
 
 def test_next_track_no_session_invokes_coord_next():
     """next_track with no session calls coord.next() and returns live track info."""
-    speaker = SoCoFake(player_name="Kitchen", uid="RINCON_NOSESS001")
-    speaker._track = {
-        "uri": "http://cdn.example.com/track1.mp3",
-        "title": "Track One",
-        "artist": "Artist A",
-        "album": "Album X",
-        "position": "0:00:05",
-        "duration": "0:03:00",
-        "playlist_position": "1",
-    }
-    speaker._transport = {"current_transport_state": "PLAYING"}
+    speaker = make_speaker_playing_queue(
+        player_name="Kitchen",
+        uid="RINCON_NOSESS001",
+        uri="http://cdn.example.com/track1.mp3",
+        title="Track One",
+        artist="Artist A",
+        album="Album X",
+        position="0:00:05",
+        duration="0:03:00",
+        playlist_position="1",
+    )
     mgr = _make_manager(speaker, _HOST_IP, _AUDIO_PORT)
 
     result = mgr.next_track("Kitchen")
@@ -358,17 +331,17 @@ def test_next_track_no_session_invokes_coord_next():
 
 def test_previous_track_no_session_invokes_coord_previous():
     """previous_track with no session calls coord.previous() and returns live track info."""
-    speaker = SoCoFake(player_name="Kitchen", uid="RINCON_NOSESS002")
-    speaker._track = {
-        "uri": "http://cdn.example.com/track0.mp3",
-        "title": "Track Zero",
-        "artist": "Artist B",
-        "album": "Album Y",
-        "position": "0:00:02",
-        "duration": "0:04:00",
-        "playlist_position": "0",
-    }
-    speaker._transport = {"current_transport_state": "PLAYING"}
+    speaker = make_speaker_playing_queue(
+        player_name="Kitchen",
+        uid="RINCON_NOSESS002",
+        uri="http://cdn.example.com/track0.mp3",
+        title="Track Zero",
+        artist="Artist B",
+        album="Album Y",
+        position="0:00:02",
+        duration="0:04:00",
+        playlist_position="0",
+    )
     mgr = _make_manager(speaker, _HOST_IP, _AUDIO_PORT)
 
     result = mgr.previous_track("Kitchen")
@@ -401,17 +374,17 @@ def test_stop_no_session_calls_coord_stop_and_does_not_clear_queue():
 
 def test_status_no_session_returns_live_state():
     """status with no session reads live transport/track state from the coordinator."""
-    speaker = SoCoFake(player_name="Kitchen", uid="RINCON_NOSESS004")
-    speaker._transport = {"current_transport_state": "PLAYING"}
-    speaker._track = {
-        "uri": "http://cdn.example.com/song.mp3",
-        "title": "My Song",
-        "artist": "Cool Band",
-        "album": "Best Album",
-        "position": "0:01:30",
-        "duration": "0:04:20",
-        "playlist_position": "2",
-    }
+    speaker = make_speaker_playing_queue(
+        player_name="Kitchen",
+        uid="RINCON_NOSESS004",
+        uri="http://cdn.example.com/song.mp3",
+        title="My Song",
+        artist="Cool Band",
+        album="Best Album",
+        position="0:01:30",
+        duration="0:04:20",
+        playlist_position="2",
+    )
     mgr = _make_manager(speaker, _HOST_IP, _AUDIO_PORT)
 
     result = mgr.status("Kitchen")
@@ -459,18 +432,10 @@ def test_next_track_no_session_swallows_soco_error():
 
 def test_worker_session_path_unchanged_for_next():
     """Worker-session path: next_track signals skip_event, not coord.next()."""
-    import mcp_sonos.playlists as playlists_mod
-
     speaker = SoCoFake(player_name="Kitchen", uid="RINCON_SESS001")
     mgr = _make_manager(speaker, _HOST_IP, _AUDIO_PORT)
 
-    # Start a worker session via a TTS (MCP-hosted) playlist.
-    mgr.create("worker_pl")
-    mgr.add_many("worker_pl", [{"url": _MCP_URL, "title": "TTS"}])
-    old_interval = playlists_mod.POLL_INTERVAL
-    playlists_mod.POLL_INTERVAL = 0.01
-    try:
-        mgr.play("Kitchen", "worker_pl")
+    with worker_session(mgr, speaker, playlist_name="worker_pl"):
         assert speaker.uid in mgr._sessions
 
         result = mgr.next_track("Kitchen")
@@ -479,28 +444,14 @@ def test_worker_session_path_unchanged_for_next():
         assert result.get("signaled") == "next"
         assert result.get("engine") == "worker"
         assert speaker.next_call_count == 0, "coord.next() must NOT be called on worker path"
-    finally:
-        playlists_mod.POLL_INTERVAL = old_interval
-        try:
-            mgr.stop("Kitchen")
-        except Exception:
-            pass
 
 
 def test_worker_session_path_unchanged_for_previous():
     """Worker-session path: previous_track signals back_event, not coord.previous(), and returns engine:'worker'."""
-    import mcp_sonos.playlists as playlists_mod
-
     speaker = SoCoFake(player_name="Kitchen", uid="RINCON_SESS002")
     mgr = _make_manager(speaker, _HOST_IP, _AUDIO_PORT)
 
-    # Start a worker session via a TTS (MCP-hosted) playlist.
-    mgr.create("worker_prev_pl")
-    mgr.add_many("worker_prev_pl", [{"url": _MCP_URL, "title": "TTS"}])
-    old_interval = playlists_mod.POLL_INTERVAL
-    playlists_mod.POLL_INTERVAL = 0.01
-    try:
-        mgr.play("Kitchen", "worker_prev_pl")
+    with worker_session(mgr, speaker, playlist_name="worker_prev_pl"):
         assert speaker.uid in mgr._sessions
 
         result = mgr.previous_track("Kitchen")
@@ -509,28 +460,14 @@ def test_worker_session_path_unchanged_for_previous():
         assert result.get("signaled") == "previous"
         assert result.get("engine") == "worker"
         assert speaker.previous_call_count == 0, "coord.previous() must NOT be called on worker path"
-    finally:
-        playlists_mod.POLL_INTERVAL = old_interval
-        try:
-            mgr.stop("Kitchen")
-        except Exception:
-            pass
 
 
 def test_worker_session_stop_returns_engine_worker():
     """Worker-session path: stop signals stop_event and returns engine:'worker'."""
-    import mcp_sonos.playlists as playlists_mod
-
     speaker = SoCoFake(player_name="Kitchen", uid="RINCON_SESS003")
     mgr = _make_manager(speaker, _HOST_IP, _AUDIO_PORT)
 
-    # Start a worker session via a TTS (MCP-hosted) playlist.
-    mgr.create("worker_stop_pl")
-    mgr.add_many("worker_stop_pl", [{"url": _MCP_URL, "title": "TTS"}])
-    old_interval = playlists_mod.POLL_INTERVAL
-    playlists_mod.POLL_INTERVAL = 0.01
-    try:
-        mgr.play("Kitchen", "worker_stop_pl")
+    with worker_session(mgr, speaker, playlist_name="worker_stop_pl"):
         assert speaker.uid in mgr._sessions
 
         result = mgr.stop("Kitchen")
@@ -538,8 +475,6 @@ def test_worker_session_stop_returns_engine_worker():
         # Must signal stop and return engine:'worker'; also stops the coordinator.
         assert result.get("stopped") is True
         assert result.get("engine") == "worker"
-    finally:
-        playlists_mod.POLL_INTERVAL = old_interval
 
 
 # ---------------------------------------------------------------------------

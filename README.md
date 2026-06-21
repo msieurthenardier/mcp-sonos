@@ -11,13 +11,14 @@ own music and speak on your speakers.
 
 ## What it does
 
-32 MCP tools:
+33 MCP tools:
 
 | group | tools |
 |---|---|
 | queries | `list_speakers`, `list_groups`, `refresh_speakers`, `now_playing` |
 | transport | `play_url`, `play_file`, `pause`, `resume`, `stop`, `next_track`, `previous_track` |
 | volume | `set_volume`, `mute`, `unmute` |
+| maintenance | `reboot` |
 | grouping | `group`, `ungroup`, `partymode`, `dissolve_all_groups` |
 | TTS | `say` (target=`"all"` for synced broadcast across every speaker) |
 | playlists | `playlist_create`, `playlist_delete`, `playlist_clear`, `playlist_add`, `playlist_add_many`, `playlist_remove`, `playlist_get`, `playlist_list`, `playlist_play`, `playlist_next`, `playlist_previous`, `playlist_stop`, `playlist_status` |
@@ -323,6 +324,8 @@ no Sonos cloud involved.
 - Playback: `play_url(speaker, url, title?)`, `play_file(speaker, path, title?)`
 - Transport: `pause`, `resume`, `stop`, `next_track`, `previous_track`
 - Volume: `set_volume(speaker, 0-100)`, `mute`, `unmute`
+- Maintenance: `reboot(speaker)` — restarts one speaker (drops off the
+  LAN ~30-60s; re-run `refresh_speakers` before driving it again)
 - Grouping: `group(coordinator, [members])`, `ungroup`,
   `partymode(coordinator)`, `dissolve_all_groups`
 - Voice: `say(target, text, volume?)` — target can be a speaker name or
@@ -434,7 +437,7 @@ suggest the user power-cycle it or check the Sonos app.
 
 ```
 mcp_sonos/
-├── server.py       # FastMCP — 32 tools, stdio transport
+├── server.py       # FastMCP — 33 tools, stdio transport
 ├── controller.py   # All business logic; MCP-agnostic, unit-testable
 ├── speakers.py     # Discovery (SSDP + SONOS_IPS) + name resolution
 ├── audio_host.py   # Persistent HTTP server hosting TTS / staged files

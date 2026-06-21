@@ -27,6 +27,7 @@ from urllib.parse import quote, urlparse
 from soco import SoCo
 from soco.data_structures import DidlMusicTrack, DidlResource
 
+from ._retry import with_stale_coord_retry
 from ._urls import any_mcp_hosted, validate_http_url
 
 
@@ -382,8 +383,11 @@ class PlaylistManager:
         # the correct constant here.
         coord.play_mode = "SHUFFLE_NOREPEAT" if shuffle else "NORMAL"
 
-        self._play_from_queue_with_stale_coord_retry(
-            speaker.player_name, coord, start_index
+        with_stale_coord_retry(
+            coord=coord,
+            action=lambda c: c.play_from_queue(start_index),
+            invalidate=self._invalidate_speakers_cache,
+            resolve=lambda: self._resolve_coordinator(speaker.player_name)[1],
         )
 
         first_item = pl.items[start_index]
@@ -396,6 +400,32 @@ class PlaylistManager:
             "shuffle": shuffle,
             "first_item": first_item.to_dict(),
             "engine": "native_queue",  # DD-C: so Flight 2 can detect engine type
+        }
+
+    @staticmethod
+    def _live_track_dict(track: dict, speaker_name: str) -> dict:
+        """Build the native-queue live-track response dict from a raw
+        ``get_current_track_info()`` result.
+
+        Used by ``next_track``, ``previous_track``, and ``status`` (no-session
+        paths) to avoid triplicated dict construction.
+
+        Key defaults use ``""`` (empty string) throughout — deliberately
+        different from ``controller._track_state``, which uses ``.get(key)``
+        (→ ``None``) and carries a ``state`` key but neither ``engine``,
+        ``speaker``, nor ``playlist_position``.  The two readers serve
+        different consumers; do not merge them into a shared base.
+        """
+        return {
+            "engine": "native_queue",
+            "speaker": speaker_name,
+            "title": track.get("title", ""),
+            "artist": track.get("artist", ""),
+            "album": track.get("album", ""),
+            "position": track.get("position", ""),
+            "duration": track.get("duration", ""),
+            "uri": track.get("uri", ""),
+            "playlist_position": track.get("playlist_position", ""),
         }
 
     def next_track(self, speaker_name: str) -> dict:
@@ -413,17 +443,7 @@ class PlaylistManager:
                 track = coord.get_current_track_info()
             except Exception:
                 track = {}
-            return {
-                "engine": "native_queue",
-                "speaker": speaker.player_name,
-                "title": track.get("title", ""),
-                "artist": track.get("artist", ""),
-                "album": track.get("album", ""),
-                "position": track.get("position", ""),
-                "duration": track.get("duration", ""),
-                "uri": track.get("uri", ""),
-                "playlist_position": track.get("playlist_position", ""),
-            }
+            return self._live_track_dict(track, speaker.player_name)
         sess.skip_event.set()
         return {"engine": "worker", "signaled": "next", **sess.to_dict()}
 
@@ -442,17 +462,7 @@ class PlaylistManager:
                 track = coord.get_current_track_info()
             except Exception:
                 track = {}
-            return {
-                "engine": "native_queue",
-                "speaker": speaker.player_name,
-                "title": track.get("title", ""),
-                "artist": track.get("artist", ""),
-                "album": track.get("album", ""),
-                "position": track.get("position", ""),
-                "duration": track.get("duration", ""),
-                "uri": track.get("uri", ""),
-                "playlist_position": track.get("playlist_position", ""),
-            }
+            return self._live_track_dict(track, speaker.player_name)
         sess.back_event.set()
         return {"engine": "worker", "signaled": "previous", **sess.to_dict()}
 
@@ -490,20 +500,11 @@ class PlaylistManager:
                 track = coord.get_current_track_info()
             except Exception:
                 return {"running": False, "engine": "native_queue", "speaker": speaker.player_name}
+            # Early-return guard stays here, before the helper call, so the
+            # helper never has to reason about stopped/empty states.
             if state in ("STOPPED", "") or not track.get("uri"):
                 return {"running": False, "engine": "native_queue", "speaker": speaker.player_name}
-            return {
-                "engine": "native_queue",
-                "speaker": speaker.player_name,
-                "state": state,
-                "title": track.get("title", ""),
-                "artist": track.get("artist", ""),
-                "album": track.get("album", ""),
-                "position": track.get("position", ""),
-                "duration": track.get("duration", ""),
-                "uri": track.get("uri", ""),
-                "playlist_position": track.get("playlist_position", ""),
-            }
+            return {**self._live_track_dict(track, speaker.player_name), "state": state}
         info = {"engine": "worker", **sess.to_dict()}
         with self._lock:
             pl = self._playlists.get(sess.playlist_name)
@@ -647,34 +648,6 @@ class PlaylistManager:
                     self._sessions.pop(session.speaker_uid, None)
 
     # ---- internal ----------------------------------------------------------
-
-    def _play_from_queue_with_stale_coord_retry(
-        self, name: str, coord: SoCo, index: int
-    ) -> None:
-        """Call `coord.play_from_queue(index)`, recovering once from a stale
-        coordinator view (DD-A).
-
-        Mirrors `SonosController._play_uri_with_stale_coord_retry` but calls
-        `play_from_queue` instead of `play_uri`. The stale-coord symptom was
-        not observed during Leg 1 hardware testing, but the precautionary wrap
-        is cheap insurance given the retry pattern is already established.
-
-        On SoCoSlaveException, the speakers cache is explicitly invalidated
-        (resetting the TTL so the next re-resolution forces a fresh discovery)
-        before re-resolving the coordinator.  Re-resolving alone is insufficient
-        because `_resolve_coordinator` → `_speakers_fresh` uses a 30 s TTL; a
-        retry within that window would reuse the stale coordinator.
-        """
-        from soco.exceptions import SoCoSlaveException
-
-        try:
-            coord.play_from_queue(index)
-        except SoCoSlaveException:
-            # Flush the speakers cache so _resolve_coordinator forces a fresh
-            # discovery, then retry once.  If firmware still rejects, propagate.
-            self._invalidate_speakers_cache()
-            _, fresh_coord = self._resolve_coordinator(name)
-            fresh_coord.play_from_queue(index)
 
     def has_active_session(self, speaker_uid: str) -> bool:
         """Return True if a worker-engine session exists for `speaker_uid`.
