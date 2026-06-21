@@ -1,6 +1,6 @@
 # Leg: extract-live-track-dict
 
-**Status**: ready
+**Status**: landed
 **Flight**: [Consolidation & Hygiene](../flight.md)
 
 ## Objective
@@ -11,6 +11,19 @@ Extract the triplicated live-coordinator-read dict in `playlists.py` into one he
 - `playlists.py` builds the same live-track dict in three places — `next_track`, `previous_track`, and `status` (the three sites read `coord.get_current_track_info()`; they sit roughly in `playlists.py:411-506`, line numbers drift slightly between reviewer reports — locate by the `get_current_track_info()` reads).
 - The dict shape is `{engine, speaker, title, artist, album, position, duration, uri, playlist_position}`. `next_track` and `previous_track` are near-identical (differ only in `coord.next()` vs `coord.previous()`).
 - The shape also **diverges** from `controller.py:39` `_track_state` (different key defaults — `""` vs `None`, plus `playlist_position`), so the two live-state readers can drift apart independently.
+
+> **Design-review note (verified against code):** the three sites are
+> `next_track` (`playlists.py:413`), `previous_track` (`:442`), `status` (`:490`);
+> `_track_state` is at `controller.py:39`. **The two readers are structurally
+> incompatible — do NOT force a shared base.** `_track_state` uses `.get(key)`
+> (→ `None`) and carries a `state` key but no `engine`/`speaker`/`playlist_position`;
+> the playlists sites use `.get(key, "")` (→ `""`) and carry
+> `engine`/`speaker`/`playlist_position` but no `state`. The correct outcome is
+> ONE `_live_track_dict` helper for the three **playlists** sites, plus a comment
+> documenting the deliberate divergence from `_track_state` (not a merged base).
+> **Behavior-preservation:** `status` has an early-return guard (around `:493-494`,
+> `if state in ("STOPPED", "") or not track.get("uri")` → minimal dict) — that
+> guard must stay in `status` BEFORE the helper call, never inside the helper.
 
 ## Inputs
 - `mcp_sonos/playlists.py` with the three live-read sites

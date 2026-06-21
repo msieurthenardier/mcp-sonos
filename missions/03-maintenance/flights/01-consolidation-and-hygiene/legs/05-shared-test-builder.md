@@ -1,6 +1,6 @@
 # Leg: shared-test-builder
 
-**Status**: ready
+**Status**: landed
 **Flight**: [Consolidation & Hygiene](../flight.md)
 
 ## Objective
@@ -12,6 +12,18 @@ Hoist the "playing-speaker" track/transport builder and shared constants into th
 - `_make_speaker_playing_queue` exists as a builder in `tests/test_queue_resume.py:59`, but `tests/test_queue_path.py:337,362,405` re-inline the same 7-field `_track` dict + `_transport = {"current_transport_state": "PLAYING"}` instead of sharing it. Field-name drift between the two copies could silently diverge.
 - The constants `_HOST_IP`/`_AUDIO_PORT`/`_MCP_URL` are duplicated (`test_queue_path.py:27` and inlined elsewhere).
 - **This leg is a prerequisite for legs 07 (T-3) and 08 (T-4)** — the shared builder is what makes their parametrization clean. Land this first.
+
+> **Design-review note (verified against code):** `tests/conftest.py` is empty
+> (0 bytes). `_make_speaker_playing_queue` is at `test_queue_resume.py:59`; the
+> inlined dicts are at `test_queue_path.py:337,362,405`. **Correction:** the
+> `_HOST_IP`/`_AUDIO_PORT`/`_MCP_URL` constants (`test_queue_path.py:27-29`) exist
+> ONLY in `test_queue_path.py` — they are NOT in `test_queue_resume.py` (which
+> uses a monkeypatched-controller setup, not direct `PlaylistManager`
+> construction). So the constants migration is one-directional (within/ from
+> `test_queue_path.py`); there is nothing to de-dup on that point in
+> `test_queue_resume.py`. `POLL_INTERVAL` is a module-level constant at
+> `playlists.py:48`, patched via `playlists_mod.POLL_INTERVAL` — save/restore the
+> module attribute, not a manager attribute.
 
 ## Inputs
 - `tests/conftest.py` (empty)

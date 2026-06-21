@@ -1,6 +1,6 @@
 # Leg: worker-session-fixture
 
-**Status**: ready
+**Status**: landed
 **Flight**: [Consolidation & Hygiene](../flight.md)
 
 ## Objective

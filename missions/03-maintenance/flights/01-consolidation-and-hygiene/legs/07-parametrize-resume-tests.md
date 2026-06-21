@@ -1,6 +1,6 @@
 # Leg: parametrize-resume-tests
 
-**Status**: ready
+**Status**: landed
 **Flight**: [Consolidation & Hygiene](../flight.md)
 
 ## Objective
@@ -15,6 +15,24 @@ Parametrize the shared resume observable across the overlapping resume tests, wh
   - non-default `play_mode` resume
   - seek-failure (`try: seek() except: pass`) and seek-at-zero skip guards
 - Depends on leg 05 (shared builder).
+
+> **Design-review note (verified against code):** the spec's line numbers are
+> off by 10-20 lines — **locate by test name, not line number.** Actual lines:
+> `test_say_resumes_queue_after_announcement:100`,
+> `test_say_resumes_with_non_default_play_mode:124`,
+> `test_play_url_resumes_queue_and_blocks:145`,
+> `test_play_url_returns_post_resume_state:171`,
+> `test_play_file_inherits_resume:193`, `test_seek_called_with_snapshot_position:405`.
+> **Must NOT be folded** (each pins a distinct behavior beyond the shared
+> observable): `test_say_resumes_queue_after_announcement` (asserts
+> `play_from_queue`-before-`play_mode`-restore **ordering**),
+> `test_say_resumes_with_non_default_play_mode` (non-default play_mode),
+> `test_play_url_resumes_queue_and_blocks` (blocking + `PLAY_URL_RESUME_TIMEOUT_SECONDS`),
+> `test_play_url_returns_post_resume_state` (return-dict shape),
+> `test_play_file_inherits_resume` (delegation), the seek-failure/at-zero guards.
+> The true "shared-observable-only" merge set is likely **2-3**, not 4 —
+> **enumerate by reading each test** before collapsing; the criterion is "no
+> coverage lost," not a target count.
 
 ## Inputs
 - `tests/test_queue_resume.py` with the 14 resume tests

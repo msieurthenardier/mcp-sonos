@@ -1,6 +1,6 @@
 # Leg: say-all-sleep-seam
 
-**Status**: ready
+**Status**: landed
 **Flight**: [Consolidation & Hygiene](../flight.md)
 
 ## Objective

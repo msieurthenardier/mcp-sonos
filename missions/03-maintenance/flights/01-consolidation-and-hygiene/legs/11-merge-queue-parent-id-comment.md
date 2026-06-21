@@ -33,8 +33,10 @@ Merge the duplicated `QUEUE_PARENT_ID` audit comment in `playlists.py` so the `p
 1. **Merge the two paragraphs** — combine into a single block: state the rule
    (`parent_id` must not be `"-1"`; `"A:TRACKS"` is the conventional value) and
    keep the audit-trail pointer (Flight 1 hardware finding: `"-1"` loses titles,
-   any non-`"-1"` preserves them). Preserve the cross-reference to
-   `CLAUDE.md:118-128` if present.
+   any non-`"-1"` preserves them).
+   - **Design-review correction:** the current comment does NOT cite
+     `CLAUDE.md` — do NOT add a `CLAUDE.md:NNN` line reference (it would
+     introduce a line number that drifts). Just merge the two existing paragraphs.
 
 ## Edge Cases
 - **Keep the audit trail** — do not drop the "Flight 1 hardware finding"

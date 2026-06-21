@@ -5,8 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 An MCP server (FastMCP) that exposes a Sonos household for local LAN
-control via SoCo's UPnP. 32 tools across discovery, transport, volume,
-grouping, TTS announcements, and in-memory playlists. Designed to be
+control via SoCo's UPnP. 33 tools across discovery, transport, volume,
+grouping, TTS announcements, maintenance (reboot), and in-memory
+playlists. Designed to be
 driven by an agentic system, not a human CLI.
 
 ## Commands
@@ -237,7 +238,7 @@ re-synthesize.
   `AUDIO_MEDIA_ROOT` is read once at init and resolved into
   `self.media_root: Path | None`; the `is_dir()` check + extension
   allow-list run on every `play_file` call. Rationale: a misconfigured
-  path doesn't crash the MCP server at import time — the other 31 tools
+  path doesn't crash the MCP server at import time — the other 32 tools
   keep working, and the affected tool returns a clear error pointing at
   the env var. Note: this trades startup-fast-fail for graceful
   degradation; pick accordingly per new env var.

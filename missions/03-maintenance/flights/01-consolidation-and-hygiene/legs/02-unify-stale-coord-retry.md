@@ -1,6 +1,6 @@
 # Leg: unify-stale-coord-retry
 
-**Status**: ready
+**Status**: landed
 **Flight**: [Consolidation & Hygiene](../flight.md)
 
 ## Objective
@@ -18,6 +18,20 @@ Replace the two divergent stale-coordinator retry helpers with one shared helper
   3. Action: controller calls `play_uri(url, title=...)`; playlists calls `play_from_queue(index)`.
 - Finding **I-4** (Advisory): the playlists twin's return value is dead (the recovered `fresh_coord` is discarded on the retry branch). This disappears automatically once both go through a helper that returns the fresh coordinator.
 - Both retry paths are already test-covered (`test_say_coordinator.py` and `test_queue_path.py:623` `test_slave_exception_retry_flushes_cache_and_succeeds`) — the suite is the regression net for behavior preservation.
+
+> **Design-review note (verified against code):** `controller.py:386`
+> `_play_uri_with_stale_coord_retry(self, name, coord, url, *, title) -> SoCo`;
+> `playlists.py:651` `_play_from_queue_with_stale_coord_retry(self, name, coord, index) -> None`
+> (the dead `fresh_coord` is at ~line 676-677). `controller.py` imports
+> `playlists.py` but not vice-versa, so a standalone `mcp_sonos/_retry.py` is
+> **cycle-free** — either DI or a shared module works. **Behavior-preservation
+> (must verify before collapsing):** confirm the controller injects an
+> `invalidate_speakers_cache` callback that actually zeros `_speakers_ts` — if
+> the unified helper drives invalidation only through the injected callback, the
+> controller path must inject one equivalent to its current `self._speakers_ts = 0.0`,
+> or it silently loses cache invalidation. Coverage regression net:
+> `tests/test_say_coordinator.py` (controller path) + `tests/test_queue_path.py:623`
+> (queue path) — confirm `test_say_coordinator.py` exists (`ls tests/`) before relying on it.
 
 ## Inputs
 - `mcp_sonos/controller.py` with `_play_uri_with_stale_coord_retry`

@@ -22,6 +22,7 @@ import pytest
 
 from mcp_sonos import controller as controller_mod
 from mcp_sonos.controller import SonosController
+from tests._builders import make_speaker_playing_queue
 from tests._fakes import SoCoFake
 
 
@@ -56,30 +57,9 @@ def stub_controller(monkeypatch, tmp_path):
     return SonosController(cache_dir=tmp_path)
 
 
-def _make_speaker_playing_queue(
-    player_name: str = "Kitchen",
-    uid: str = "RINCON_FAKE001",
-    playlist_position: str = "2",
-    play_mode: str = "NORMAL",
-) -> SoCoFake:
-    """Return a SoCoFake that appears to be actively playing from a queue."""
-    s = SoCoFake(player_name=player_name, uid=uid)
-    # Populate the native queue with two fake items.
-    s._queue = ["item0", "item1", "item2"]
-    # Set PLAYING transport state.
-    s._transport = {"current_transport_state": "PLAYING"}
-    # Set a meaningful track position inside the queue.
-    s._track = {
-        "uri": "http://example.com/track2.mp3",
-        "title": "Track 2",
-        "artist": "Artist",
-        "album": "Album",
-        "position": "0:01:30",
-        "duration": "0:04:00",
-        "playlist_position": playlist_position,
-    }
-    s._play_mode = play_mode
-    return s
+# _make_speaker_playing_queue is the shared builder from tests/_builders.py;
+# keep a local alias so call sites in this file are unchanged.
+_make_speaker_playing_queue = make_speaker_playing_queue
 
 
 def _wire_speaker(monkeypatch, controller: SonosController, speaker: SoCoFake) -> None:
@@ -220,67 +200,34 @@ def test_play_file_inherits_resume(monkeypatch, tmp_path, stub_controller):
 # ---------------------------------------------------------------------------
 
 
-def test_no_queue_skip_no_play_from_queue(monkeypatch, stub_controller):
-    """When queue_size == 0, no snapshot is taken and play_from_queue is never called."""
-    speaker = SoCoFake(player_name="Kitchen", uid="RINCON_FAKE001")
-    # Empty queue (queue_size = 0), PLAYING, but playlist_position "1".
-    speaker._transport = {"current_transport_state": "PLAYING"}
-    speaker._track = {
-        "uri": "http://example.com/stream",
-        "title": "Stream",
-        "artist": "",
-        "album": "",
-        "position": "0:00:00",
-        "duration": "0:00:00",
-        "playlist_position": "1",
-    }
+@pytest.mark.parametrize(
+    "queue, transport_state, playlist_position",
+    [
+        pytest.param([], "PLAYING", "1", id="empty-queue"),
+        pytest.param(["item0"], "STOPPED", "1", id="not-playing"),
+        pytest.param(["item0"], "PLAYING", "0", id="position-zero"),
+    ],
+)
+def test_skip_guard_no_play_from_queue(
+    monkeypatch, stub_controller, queue, transport_state, playlist_position
+):
+    """Resume is skipped when any guard-term is triggered: empty queue, not
+    playing, or playlist_position '0'.  Each case uses a single-field override
+    of the canonical playing-speaker state so the OR-terms stay independent.
+    """
+    speaker = _make_speaker_playing_queue(
+        queue=queue,
+        transport_state=transport_state,
+        playlist_position=playlist_position,
+    )
     _wire_speaker(monkeypatch, stub_controller, speaker)
 
-    stub_controller.say("Kitchen", "no queue test")
+    stub_controller.say("Kitchen", "guard test")
 
-    assert speaker.play_from_queue_last_index is None, "should not resume when queue is empty"
-
-
-def test_not_playing_skip_no_play_from_queue(monkeypatch, stub_controller):
-    """When transport is STOPPED (nothing playing), no resume attempted."""
-    speaker = SoCoFake(player_name="Kitchen", uid="RINCON_FAKE001")
-    speaker._queue = ["item0"]
-    speaker._transport = {"current_transport_state": "STOPPED"}
-    speaker._track = {
-        "uri": "",
-        "title": "",
-        "artist": "",
-        "album": "",
-        "position": "0:00:00",
-        "duration": "0:00:00",
-        "playlist_position": "1",
-    }
-    _wire_speaker(monkeypatch, stub_controller, speaker)
-
-    stub_controller.say("Kitchen", "stopped test")
-
-    assert speaker.play_from_queue_last_index is None
-
-
-def test_playlist_position_zero_skip_no_play_from_queue(monkeypatch, stub_controller):
-    """When playlist_position is '0', int() == 0 → guard fails → no resume."""
-    speaker = SoCoFake(player_name="Kitchen", uid="RINCON_FAKE001")
-    speaker._queue = ["item0"]
-    speaker._transport = {"current_transport_state": "PLAYING"}
-    speaker._track = {
-        "uri": "http://example.com/stream",
-        "title": "Stream",
-        "artist": "",
-        "album": "",
-        "position": "0:00:00",
-        "duration": "0:00:00",
-        "playlist_position": "0",
-    }
-    _wire_speaker(monkeypatch, stub_controller, speaker)
-
-    stub_controller.say("Kitchen", "position zero test")
-
-    assert speaker.play_from_queue_last_index is None
+    assert speaker.play_from_queue_last_index is None, (
+        f"should not resume when guard triggered: "
+        f"queue={queue!r}, transport={transport_state!r}, pos={playlist_position!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +310,8 @@ def test_say_all_no_resume(monkeypatch, stub_controller):
         sp_mod, "resolve_name", lambda spks, name: next(s for s in spks if s.player_name == name)
     )
     stub_controller._speakers_ts = 0.0
+    # Patch the injectable sleep so the 1.0s topology-settle doesn't cost real time.
+    stub_controller._sleep = lambda *_: None
 
     result = stub_controller.say("all", "test all")
 

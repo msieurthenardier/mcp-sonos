@@ -46,7 +46,7 @@ PlaylistName = Annotated[
 
 
 def register_tools(mcp: FastMCP, controller: SonosController) -> None:
-    """Register all 32 MCP tools as closures bound to the supplied controller.
+    """Register all 33 MCP tools as closures bound to the supplied controller.
 
     Called from `main()` after constructing the controller so module import
     has no side effects (no TCP bind, no SSDP discovery thread).
@@ -142,6 +142,19 @@ def register_tools(mcp: FastMCP, controller: SonosController) -> None:
     def unmute(speaker: SpeakerName) -> dict:
         """Unmute one speaker."""
         return controller.unmute(speaker)
+
+    # ---- maintenance --------------------------------------------------------
+
+    @mcp.tool
+    def reboot(speaker: SpeakerName) -> dict:
+        """Reboot a single speaker via its firmware control port.
+
+        Per-speaker, not group-wide. The speaker drops off the LAN for
+        ~30-60s while it restarts; re-run refresh_speakers before driving it
+        again. Best-effort: the firmware HTTP endpoint is undocumented and
+        behaviour varies by model/firmware.
+        """
+        return controller.reboot(speaker)
 
     # ---- grouping -----------------------------------------------------------
 
