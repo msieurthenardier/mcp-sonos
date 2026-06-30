@@ -19,6 +19,7 @@ from typing import Callable
 from soco import SoCo
 
 from . import speakers as sp
+from ._extract import extract_audio_urls
 from ._retry import with_stale_coord_retry
 from ._urls import validate_http_url
 from .audio_host import AudioHost
@@ -243,6 +244,106 @@ class SonosController:
             "group_members": _group_members_of(coord),
             "url": url,
             **_track_state(coord),
+        }
+
+    def play_stream(self, name: str, url: str, title: str | None = None) -> dict:
+        """Play a live radio stream (endless) on a speaker — non-blocking.
+
+        Unlike ``play_url`` (which is for finite clips and BLOCKS until the
+        clip ends), this is for never-ending Icecast/Shoutcast-style streams.
+        It returns as soon as the stream is confirmed started.
+
+        Sonos models disagree on how to start a live stream: newer zones take
+        a plain ``http://…`` URI, while others (e.g. older Connect/Amp) reject
+        it with a 714 ``Illegal MIME-Type`` or stall to STOPPED and only play
+        the same URL wrapped in the ``x-rincon-mp3radio://`` scheme. We try
+        plain first, confirm the transport actually reaches PLAYING, and fall
+        back to the radio scheme (with a short retry for the transient
+        701 ``Transition not available``) otherwise. Raises RuntimeError if
+        neither scheme sustains playback.
+        """
+        validate_http_url(url)
+        s, coord = self._resolve_coordinator(name)
+        attempts = (("plain", url), ("radio", "x-rincon-mp3radio://" + url))
+        last_reason = ""
+        for label, uri in attempts:
+            # A clean transport state matters: a 701 "transition not available"
+            # is almost always residual state from a just-prior stop/play. Give
+            # the coordinator a moment to settle before driving it.
+            try:
+                coord.stop()
+            except Exception:
+                pass
+            self._sleep(1.5)
+            started = False
+            for _ in range(3):  # transient 701 retry (radio scheme esp.)
+                try:
+                    coord.play_uri(uri, title=title or "Live stream")
+                    started = True
+                    break
+                except Exception as e:
+                    last_reason = str(e)
+                    if "701" in last_reason:
+                        self._sleep(1.2)
+                        continue
+                    break  # non-transient (e.g. 714) → try next scheme
+            if not started:
+                continue
+            # Confirm it actually sustains, not just TRANSITIONING→STOPPED.
+            for _ in range(12):
+                self._sleep(0.5)
+                state = coord.get_current_transport_info().get(
+                    "current_transport_state"
+                )
+                if state == "PLAYING":
+                    return {
+                        "requested": s.player_name,
+                        "played_on_coordinator": coord.player_name,
+                        "group_members": _group_members_of(coord),
+                        "url": url,
+                        "scheme": label,
+                        **_track_state(coord),
+                    }
+                if state == "STOPPED":
+                    last_reason = f"{label} scheme stalled to STOPPED"
+                    break
+        raise RuntimeError(
+            f"Could not start stream {url} on {s.player_name}: {last_reason}. "
+            "The stream may be incompatible with this speaker model."
+        )
+
+    def playlist_from_page(
+        self, playlist: str, page_url: str, limit: int = 5
+    ) -> dict:
+        """Build a named playlist from audio links found on a web page.
+
+        Fetches ``page_url`` server-side, extracts up to ``limit`` direct
+        ``.mp3`` links, and loads them into the named playlist (creating it
+        if absent, replacing its contents if it already exists). The audio
+        URLs never pass through the calling model — only a compact summary
+        (playlist name, source, count, titles) is returned, so a small-
+        context agent can do this in one tool call and then ``playlist_play``.
+
+        Raises RuntimeError if no audio links are found on the page.
+        """
+        validate_http_url(page_url)
+        items = extract_audio_urls(page_url, limit)
+        if not items:
+            raise RuntimeError(
+                f"No audio (.mp3) links found at {page_url}. The page may not "
+                "list direct audio files."
+            )
+        # Create-or-replace: idempotent across re-runs with the same name.
+        try:
+            self.playlists.create(playlist)
+        except Exception:
+            self.playlists.clear(playlist)
+        self.playlists.add_many(playlist, items)
+        return {
+            "playlist": playlist,
+            "source": page_url,
+            "count": len(items),
+            "titles": [it["title"] for it in items],
         }
 
     def play_file(self, name: str, path: str, title: str | None = None) -> dict:

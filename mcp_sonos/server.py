@@ -86,8 +86,32 @@ def register_tools(mcp: FastMCP, controller: SonosController) -> None:
         ],
         title: Annotated[str | None, Field(description="Optional title shown on the Sonos display.")] = None,
     ) -> dict:
-        """Play an arbitrary HTTP URL on the speaker's group coordinator."""
+        """Play an arbitrary HTTP URL on the speaker's group coordinator.
+
+        For a finite clip (an .mp3 file). BLOCKS until the clip finishes. Do
+        NOT use this for a never-ending radio stream — it will hang. Use
+        `play_stream` for live radio.
+        """
         return controller.play_url(speaker, url, title=title)
+
+    @mcp.tool
+    def play_stream(
+        speaker: SpeakerName,
+        url: Annotated[
+            str,
+            AfterValidator(validate_http_url),
+            Field(description="HTTP(S) URL of a live radio stream (e.g. an Icecast .mp3 stream)."),
+        ],
+        title: Annotated[str | None, Field(description="Optional station name shown on the Sonos display.")] = None,
+    ) -> dict:
+        """Play a live, never-ending radio stream — returns immediately.
+
+        Use this (not `play_url`) for radio streams. Handles the speaker-model
+        differences in how live streams must be started, and confirms the
+        stream actually began playing before returning. The result includes
+        `state` (should be 'PLAYING') and which `scheme` worked.
+        """
+        return controller.play_stream(speaker, url, title=title)
 
     @mcp.tool
     def play_file(
@@ -260,6 +284,37 @@ def register_tools(mcp: FastMCP, controller: SonosController) -> None:
                 except ValueError as e:
                     raise ValueError(f"items[{i}]: {e}")
         return controller.playlists.add_many(name, items).to_dict()
+
+    @mcp.tool
+    def playlist_from_page(
+        name: PlaylistName,
+        page_url: Annotated[
+            str,
+            AfterValidator(validate_http_url),
+            Field(
+                description=(
+                    "Web page (e.g. a music blog) to scan for direct .mp3 "
+                    "links. The page is fetched and parsed on the server; the "
+                    "audio URLs are loaded straight into the playlist without "
+                    "passing through you."
+                )
+            ),
+        ],
+        limit: Annotated[
+            int,
+            Field(ge=1, le=30, description="Max number of tracks to load. Default 5."),
+        ] = 5,
+    ) -> dict:
+        """Build a playlist from .mp3 links found on a web page, in one call.
+
+        Use this to make a playlist from a music blog (e.g. Said the
+        Gramophone) when you only have the page URL, not the individual track
+        URLs. Creates the playlist if it doesn't exist, or replaces its
+        contents if it does. Returns a small summary (count + track titles) —
+        then call `playlist_play` to start it. Raises an error if the page
+        has no direct audio links.
+        """
+        return controller.playlist_from_page(name, page_url, limit)
 
     @mcp.tool
     def playlist_remove(
