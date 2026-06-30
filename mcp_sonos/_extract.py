@@ -20,6 +20,7 @@ via ``extensions``.
 from __future__ import annotations
 
 import os
+import random
 from html.parser import HTMLParser
 from urllib.parse import unquote, urljoin, urlparse
 
@@ -80,6 +81,8 @@ def extract_audio_urls(
     page_url: str,
     limit: int = 5,
     *,
+    offset: int = 0,
+    shuffle: bool = False,
     extensions: tuple[str, ...] = _DEFAULT_EXTENSIONS,
     fetcher=_default_fetcher,
 ) -> list[dict]:
@@ -88,8 +91,18 @@ def extract_audio_urls(
     Each item is ``{"url": <absolute http(s) url>, "title": <derived>}``.
     Links are resolved against ``page_url`` (relative → absolute), filtered
     to the given ``extensions``, de-duplicated (order-preserving), and
-    validated against the http/https scheme allow-list. Returns ``[]`` if
-    nothing matches.
+    validated against the http/https scheme allow-list.
+
+    Selection of which ``limit`` links to return:
+    - default (``shuffle=False``): the page-order slice ``[offset:offset+limit]``
+      — i.e. skip the first ``offset`` matches, then take ``limit``. This is the
+      paging knob: ``offset=0`` is the top of the page, ``offset=limit`` is the
+      "next page", etc.
+    - ``shuffle=True``: a random sample of ``limit`` links drawn from ALL
+      matches on the page (``offset`` is ignored). Use for "surprise me" /
+      "random" requests.
+
+    Returns ``[]`` if nothing matches (or ``offset`` is past the end).
     """
     validate_http_url(page_url)
     if limit < 1:
@@ -101,7 +114,7 @@ def extract_audio_urls(
 
     exts = tuple(e.lower() for e in extensions)
     seen: set[str] = set()
-    out: list[dict] = []
+    found: list[str] = []
     for raw in parser.urls:
         absolute = urljoin(page_url, raw.strip())
         # Compare against a query/fragment-stripped path for the extension test.
@@ -115,7 +128,11 @@ def extract_audio_urls(
         if absolute in seen:
             continue
         seen.add(absolute)
-        out.append({"url": absolute, "title": _title_from_url(absolute)})
-        if len(out) >= limit:
-            break
-    return out
+        found.append(absolute)
+
+    if shuffle:
+        selected = random.sample(found, min(limit, len(found)))
+    else:
+        start = max(offset, 0)
+        selected = found[start : start + limit]
+    return [{"url": u, "title": _title_from_url(u)} for u in selected]

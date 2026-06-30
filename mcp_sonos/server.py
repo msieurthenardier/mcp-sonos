@@ -304,17 +304,40 @@ def register_tools(mcp: FastMCP, controller: SonosController) -> None:
             int,
             Field(ge=1, le=30, description="Max number of tracks to load. Default 5."),
         ] = 5,
+        offset: Annotated[
+            int,
+            Field(
+                ge=0,
+                description=(
+                    "Skip the first `offset` matching links, then take `limit`. "
+                    "Use for paging: offset=0 is the top of the page, offset=5 "
+                    "is the next 5, etc. Ignored when shuffle=True. Default 0."
+                ),
+            ),
+        ] = 0,
+        shuffle: Annotated[
+            bool,
+            Field(
+                description=(
+                    "If true, load a RANDOM selection of `limit` tracks from "
+                    "anywhere on the page instead of the first ones. Use for "
+                    "'random'/'surprise me' requests. Default false."
+                )
+            ),
+        ] = False,
     ) -> dict:
         """Build a playlist from .mp3 links found on a web page, in one call.
 
         Use this to make a playlist from a music blog (e.g. Said the
         Gramophone) when you only have the page URL, not the individual track
         URLs. Creates the playlist if it doesn't exist, or replaces its
-        contents if it does. Returns a small summary (count + track titles) —
-        then call `playlist_play` to start it. Raises an error if the page
-        has no direct audio links.
+        contents if it does. By default it takes the first `limit` tracks; use
+        `offset` to page deeper or `shuffle=true` for a random selection.
+        Returns a small summary (count + track titles) — then call
+        `playlist_play` to start it. Raises an error if the page has no direct
+        audio links.
         """
-        return controller.playlist_from_page(name, page_url, limit)
+        return controller.playlist_from_page(name, page_url, limit, offset=offset, shuffle=shuffle)
 
     @mcp.tool
     def playlist_remove(

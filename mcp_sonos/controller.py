@@ -313,7 +313,12 @@ class SonosController:
         )
 
     def playlist_from_page(
-        self, playlist: str, page_url: str, limit: int = 5
+        self,
+        playlist: str,
+        page_url: str,
+        limit: int = 5,
+        offset: int = 0,
+        shuffle: bool = False,
     ) -> dict:
         """Build a named playlist from audio links found on a web page.
 
@@ -324,14 +329,20 @@ class SonosController:
         (playlist name, source, count, titles) is returned, so a small-
         context agent can do this in one tool call and then ``playlist_play``.
 
-        Raises RuntimeError if no audio links are found on the page.
+        ``offset`` pages through the page's links (skip the first ``offset``
+        matches, then take ``limit``). ``shuffle=True`` instead loads a random
+        sample of ``limit`` links from anywhere on the page (``offset`` ignored).
+
+        Raises RuntimeError if no audio links are found (or ``offset`` is past
+        the last link).
         """
         validate_http_url(page_url)
-        items = extract_audio_urls(page_url, limit)
+        items = extract_audio_urls(page_url, limit, offset=offset, shuffle=shuffle)
         if not items:
             raise RuntimeError(
-                f"No audio (.mp3) links found at {page_url}. The page may not "
-                "list direct audio files."
+                f"No audio (.mp3) links found at {page_url} "
+                f"(limit={limit}, offset={offset}). The page may not list "
+                "direct audio files, or offset is past the last link."
             )
         # Create-or-replace: idempotent across re-runs with the same name.
         try:
@@ -343,6 +354,7 @@ class SonosController:
             "playlist": playlist,
             "source": page_url,
             "count": len(items),
+            "selection": "random" if shuffle else f"page-order[{offset}:{offset + limit}]",
             "titles": [it["title"] for it in items],
         }
 
