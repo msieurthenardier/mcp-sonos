@@ -11,17 +11,26 @@ own music and speak on your speakers.
 
 ## What it does
 
-33 MCP tools:
+35 MCP tools:
 
 | group | tools |
 |---|---|
 | queries | `list_speakers`, `list_groups`, `refresh_speakers`, `now_playing` |
-| transport | `play_url`, `play_file`, `pause`, `resume`, `stop`, `next_track`, `previous_track` |
+| transport | `play_url`, `play_stream`, `play_file`, `pause`, `resume`, `stop`, `next_track`, `previous_track` |
 | volume | `set_volume`, `mute`, `unmute` |
 | maintenance | `reboot` |
 | grouping | `group`, `ungroup`, `partymode`, `dissolve_all_groups` |
 | TTS | `say` (target=`"all"` for synced broadcast across every speaker) |
-| playlists | `playlist_create`, `playlist_delete`, `playlist_clear`, `playlist_add`, `playlist_add_many`, `playlist_remove`, `playlist_get`, `playlist_list`, `playlist_play`, `playlist_next`, `playlist_previous`, `playlist_stop`, `playlist_status` |
+| playlists | `playlist_create`, `playlist_delete`, `playlist_clear`, `playlist_add`, `playlist_add_many`, `playlist_from_page`, `playlist_remove`, `playlist_get`, `playlist_list`, `playlist_play`, `playlist_next`, `playlist_previous`, `playlist_stop`, `playlist_status` |
+
+`play_stream` is for never-ending live radio (Icecast/Shoutcast): it
+returns immediately and handles per-model scheme differences (plain `http`
+vs `x-rincon-mp3radio://`), unlike `play_url`, which is for finite clips
+and blocks until they end. `playlist_from_page` fetches a web page
+server-side, extracts its direct `.mp3` links, and loads them into a
+playlist (optionally starting playback via a `speaker` arg) — so an agent
+can play a music blog from just the page URL; `offset`/`shuffle` page
+through or randomize the selection.
 
 Speakers are addressed by name (case-insensitive). Transport commands
 auto-route to the group coordinator; responses include `group_members`
@@ -437,7 +446,7 @@ suggest the user power-cycle it or check the Sonos app.
 
 ```
 mcp_sonos/
-├── server.py       # FastMCP — 33 tools, stdio transport
+├── server.py       # FastMCP — 35 tools, stdio transport
 ├── controller.py   # All business logic; MCP-agnostic, unit-testable
 ├── speakers.py     # Discovery (SSDP + SONOS_IPS) + name resolution
 ├── audio_host.py   # Persistent HTTP server hosting TTS / staged files
