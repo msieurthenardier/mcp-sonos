@@ -46,7 +46,7 @@ PlaylistName = Annotated[
 
 
 def register_tools(mcp: FastMCP, controller: SonosController) -> None:
-    """Register all 33 MCP tools as closures bound to the supplied controller.
+    """Register all 35 MCP tools as closures bound to the supplied controller.
 
     Called from `main()` after constructing the controller so module import
     has no side effects (no TCP bind, no SSDP discovery thread).

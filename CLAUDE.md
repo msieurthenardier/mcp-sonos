@@ -5,9 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 An MCP server (FastMCP) that exposes a Sonos household for local LAN
-control via SoCo's UPnP. 33 tools across discovery, transport, volume,
-grouping, TTS announcements, maintenance (reboot), and in-memory
-playlists. Designed to be
+control via SoCo's UPnP. 35 tools across discovery, transport, volume,
+grouping, TTS announcements, maintenance (reboot), live-radio streaming
+(`play_stream`), web-page playlist extraction (`playlist_from_page`), and
+in-memory playlists. Designed to be
 driven by an agentic system, not a human CLI.
 
 ## Commands
