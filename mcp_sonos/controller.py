@@ -319,6 +319,7 @@ class SonosController:
         limit: int = 5,
         offset: int = 0,
         shuffle: bool = False,
+        speaker: str | None = None,
     ) -> dict:
         """Build a named playlist from audio links found on a web page.
 
@@ -326,12 +327,17 @@ class SonosController:
         ``.mp3`` links, and loads them into the named playlist (creating it
         if absent, replacing its contents if it already exists). The audio
         URLs never pass through the calling model — only a compact summary
-        (playlist name, source, count, titles) is returned, so a small-
-        context agent can do this in one tool call and then ``playlist_play``.
+        (playlist name, source, count, titles) is returned.
 
         ``offset`` pages through the page's links (skip the first ``offset``
         matches, then take ``limit``). ``shuffle=True`` instead loads a random
         sample of ``limit`` links from anywhere on the page (``offset`` ignored).
+
+        If ``speaker`` is given, playback is started on that speaker right away
+        (equivalent to a follow-up ``playlist_play``) — a one-call build+play so
+        a small-context agent doesn't have to chain two tools. When ``speaker``
+        is omitted the playlist is only built; start it later with
+        ``playlist_play``.
 
         Raises RuntimeError if no audio links are found (or ``offset`` is past
         the last link).
@@ -350,13 +356,21 @@ class SonosController:
         except Exception:
             self.playlists.clear(playlist)
         self.playlists.add_many(playlist, items)
-        return {
+        result = {
             "playlist": playlist,
             "source": page_url,
             "count": len(items),
             "selection": "random" if shuffle else f"page-order[{offset}:{offset + limit}]",
             "titles": [it["title"] for it in items],
         }
+        if speaker:
+            play = self.playlists.play(speaker, playlist)
+            result["playing"] = True
+            result["speaker"] = play.get("speaker", speaker)
+            result["engine"] = play.get("engine")
+        else:
+            result["playing"] = False
+        return result
 
     def play_file(self, name: str, path: str, title: str | None = None) -> dict:
         """Play a local file (path on the MCP host) by staging it to audio host."""

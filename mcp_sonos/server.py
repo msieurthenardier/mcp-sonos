@@ -325,19 +325,31 @@ def register_tools(mcp: FastMCP, controller: SonosController) -> None:
                 )
             ),
         ] = False,
+        speaker: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "If set to a speaker name, START playing the playlist on "
+                    "that speaker immediately after building it. This is the "
+                    "one-call way to play a blog's music: you do NOT need a "
+                    "separate playlist_play call. Omit to only build the list."
+                )
+            ),
+        ] = None,
     ) -> dict:
-        """Build a playlist from .mp3 links found on a web page, in one call.
+        """Build a playlist from .mp3 links found on a web page (and optionally play it).
 
-        Use this to make a playlist from a music blog (e.g. Said the
-        Gramophone) when you only have the page URL, not the individual track
-        URLs. Creates the playlist if it doesn't exist, or replaces its
-        contents if it does. By default it takes the first `limit` tracks; use
-        `offset` to page deeper or `shuffle=true` for a random selection.
-        Returns a small summary (count + track titles) — then call
-        `playlist_play` to start it. Raises an error if the page has no direct
-        audio links.
+        Use this to play a music blog (e.g. Said the Gramophone) when you only
+        have the page URL, not the individual track URLs. Creates the playlist
+        (or replaces it if the name exists). By default takes the first `limit`
+        tracks; use `offset` to page deeper or `shuffle=true` for a random
+        selection. **Pass `speaker` to build AND start playback in this single
+        call** — then you are done, no separate playlist_play needed. Raises an
+        error if the page has no direct audio links.
         """
-        return controller.playlist_from_page(name, page_url, limit, offset=offset, shuffle=shuffle)
+        return controller.playlist_from_page(
+            name, page_url, limit, offset=offset, shuffle=shuffle, speaker=speaker
+        )
 
     @mcp.tool
     def playlist_remove(
