@@ -39,7 +39,7 @@ Did not touch the "No test framework" line, the Commands section, or the Version
 pre-existing uncommitted edit — out of scope per this squawk and reserved for others.
 
 ## Verification
-- `grep -n '_retry.py' CLAUDE.md` → finds the new mention (the "When extending" section, "When extending" section).
+- `grep -n '_retry.py' CLAUDE.md` → finds the new mention (the "When extending" section).
   Wording matches the describe-don't-prescribe tone of the adjacent bullets (no line numbers
   cited, present-tense description of what the code does and why).
 - `timeout 300 .venv/bin/python -m pytest -q` → `78 passed in 1.51s`. Doc-only change; no
