@@ -1,10 +1,10 @@
 # Flight: Consolidation & Hygiene
 
-**Status**: in-flight
+**Status**: landed
 **Mission**: [Maintenance — Consolidation & Hygiene](../../mission.md)
 
 ## Contributing to Criteria
-- [ ] S-1, I-3, I-4, I-5, T-1, T-3, T-4, T-5, T-6, T-7, I-9, I-11, I-12 (all mission criteria — this is the only flight)
+- [x] S-1, I-3, I-4, I-5, T-1, T-3, T-4, T-5, T-6, T-7, I-9, I-11, I-12 (all mission criteria — this is the only flight)
 
 ---
 
@@ -60,11 +60,11 @@ stay green with no assertion weakened. Smoke (T-7) and comment legs (I-9, I-11,
 I-12) are independent and can be verified by inspection / a smoke dry-run.
 
 ### Checkpoints
-- [ ] Hygiene leg landed (S-1)
-- [ ] Source dedup landed (I-3, I-5) with suite green
-- [ ] Test seam + fixtures + parametrization landed (T-1, T-5, T-6, T-3, T-4) with suite green and reduced redundancy
-- [ ] Smoke resilience landed (T-7)
-- [ ] Comment fixes landed (I-9, I-11, I-12)
+- [x] Hygiene leg landed (S-1)
+- [x] Source dedup landed (I-3, I-5) with suite green
+- [x] Test seam + fixtures + parametrization landed (T-1, T-5, T-6, T-3, T-4) with suite green and reduced redundancy
+- [x] Smoke resilience landed (T-7)
+- [x] Comment fixes landed (I-9, I-11, I-12)
 
 ### Adaptation Criteria
 
@@ -83,28 +83,28 @@ I-12) are independent and can be verified by inspection / a smoke dry-run.
 
 > Ordered by dependency; one leg per finding.
 
-- [ ] `01-gitignore-env` - S-1: add `.env` to `.gitignore`
-- [ ] `02-unify-stale-coord-retry` - I-3 (+I-4): extract shared `_with_stale_coord_retry`
-- [ ] `03-extract-live-track-dict` - I-5: extract `_live_track_dict` in `playlists.py`
-- [ ] `04-say-all-sleep-seam` - T-1: add `sleep_fn` injection seam to `_say_all`
-- [ ] `05-shared-test-builder` - T-5: hoist track/transport builder + constants into `conftest.py`
-- [ ] `06-worker-session-fixture` - T-6: extract `worker_session` fixture; fix `:520` cleanup
-- [ ] `07-parametrize-resume-tests` - T-3: parametrize the shared resume observable
-- [ ] `08-parametrize-skip-guard-tests` - T-4: parametrize the three skip-guard tests
-- [ ] `09-smoke-fallback-url` - T-7: fallback external URL in `queue_smoke.py` + `reap_smoke.py`
-- [ ] `10-reword-tool-count-comment` - I-9: reword `CLAUDE.md` "31 tools" phrasing
-- [ ] `11-merge-queue-parent-id-comment` - I-11: merge the duplicated `QUEUE_PARENT_ID` comment
-- [ ] `12-codify-dir-listing-guard` - I-12: codify the directory-listing guard in `CLAUDE.md`
+- [x] `01-gitignore-env` - S-1: add `.env` to `.gitignore`
+- [x] `02-unify-stale-coord-retry` - I-3 (+I-4): extract shared `_with_stale_coord_retry`
+- [x] `03-extract-live-track-dict` - I-5: extract `_live_track_dict` in `playlists.py`
+- [x] `04-say-all-sleep-seam` - T-1: add `sleep_fn` injection seam to `_say_all`
+- [x] `05-shared-test-builder` - T-5: hoist track/transport builder + constants into `conftest.py`
+- [x] `06-worker-session-fixture` - T-6: extract `worker_session` fixture; fix `:520` cleanup
+- [x] `07-parametrize-resume-tests` - T-3: parametrize the shared resume observable
+- [x] `08-parametrize-skip-guard-tests` - T-4: parametrize the three skip-guard tests
+- [x] `09-smoke-fallback-url` - T-7: fallback external URL in `queue_smoke.py` + `reap_smoke.py`
+- [x] `10-reword-tool-count-comment` - I-9: reword `CLAUDE.md` "31 tools" phrasing
+- [x] `11-merge-queue-parent-id-comment` - I-11: merge the duplicated `QUEUE_PARENT_ID` comment
+- [x] `12-codify-dir-listing-guard` - I-12: codify the directory-listing guard in `CLAUDE.md`
 
 ---
 
 ## Post-Flight
 
 ### Completion Checklist
-- [ ] All 12 legs completed
-- [ ] Code merged
-- [ ] Tests passing (adjusted count after consolidation; no coverage lost)
-- [ ] Documentation updated (`CLAUDE.md` comment fixes)
+- [x] All 12 legs completed
+- [x] Code merged *(legs 02–08 via PR #8 / `881d152`; legs 01, 09–12 via this flight's PR)*
+- [x] Tests passing (adjusted count after consolidation; no coverage lost) — 78 passed
+- [x] Documentation updated (`CLAUDE.md` comment fixes)
 
 ### Verification
 - `pytest` green with the venv active, no weakened assertions

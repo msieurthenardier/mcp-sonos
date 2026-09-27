@@ -1,6 +1,6 @@
 # Leg: shared-test-builder
 
-**Status**: landed
+**Status**: completed
 **Flight**: [Consolidation & Hygiene](../flight.md)
 
 ## Objective

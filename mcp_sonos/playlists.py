@@ -32,12 +32,10 @@ from ._urls import any_mcp_hosted, validate_http_url
 
 
 # Parent ID used for DIDL items loaded into the native Sonos queue.
-# Must NOT be "-1" — Leg 1 hardware testing confirmed that "-1" causes
+# Must NOT be "-1" — Flight 1 hardware testing confirmed that "-1" causes
 # title metadata to be discarded by the firmware; any other value preserves
 # the title field. "A:TRACKS" is the conventional music-library container.
-# NOTE: Flight 1 hardware finding — parent_id="-1" loses track titles on
-# firmware; any non-"-1" value (e.g. "A:TRACKS") preserves them. Audit
-# any future DidlMusicTrack construction to ensure this invariant holds.
+# Audit any future DidlMusicTrack construction to ensure this invariant holds.
 QUEUE_PARENT_ID = "A:TRACKS"
 
 

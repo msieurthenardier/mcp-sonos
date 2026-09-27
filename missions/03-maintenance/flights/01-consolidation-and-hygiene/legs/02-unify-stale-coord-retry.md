@@ -1,6 +1,6 @@
 # Leg: unify-stale-coord-retry
 
-**Status**: landed
+**Status**: completed
 **Flight**: [Consolidation & Hygiene](../flight.md)
 
 ## Objective

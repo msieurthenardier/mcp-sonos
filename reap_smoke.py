@@ -17,6 +17,14 @@ Usage (two terminals, or sequential shell commands):
     # Wait a moment for the queue to be playing on the speaker...
     .venv/bin/python reap_smoke.py --control
 
+The all-external playlist that --load builds comes from
+`_smoke_common.select_track_pool()`: a primary (SoundHelix) host, with a
+fallback to a different host if the primary is unreachable at load time.
+See `_smoke_common.py` for the pools and probe details — in short, this
+only protects against a single-host outage (not "no network at smoke
+time" generally), and the reachability probe runs from this machine, not
+from the speaker.
+
 See CLAUDE.md "Commands" section and the reap-resilient-control flight artifacts.
 """
 
@@ -44,6 +52,7 @@ for noisy in ("soco", "soco.services", "urllib3", "mcp", "FastMCP"):
 
 from fastmcp import Client
 
+from _smoke_common import select_track_pool
 from mcp_sonos.controller import SonosController
 from mcp_sonos.server import mcp, register_tools
 
@@ -56,23 +65,14 @@ PLAYLIST_NAME = "reap-smoke"
 # Speaker name to use. Override via SONOS_SPEAKER env var.
 SPEAKER = os.environ.get("SONOS_SPEAKER", "Kitchen")
 
-# All-external SoundHelix tracks — same placeholder hostnames used by
-# queue_smoke.py; these URLs survive MCP restarts because they are
-# served by SoundHelix, not by the in-process audio server.
-EXTERNAL_TRACKS = [
-    {
-        "url": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-        "title": "SoundHelix Song 1",
-    },
-    {
-        "url": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
-        "title": "SoundHelix Song 2",
-    },
-    {
-        "url": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
-        "title": "SoundHelix Song 3",
-    },
-]
+# All-external tracks — same pool/probe helper used by queue_smoke.py (see
+# _smoke_common.py). The track pool (primary SoundHelix, fallback on a
+# different host if SoundHelix is unreachable) is selected only in
+# phase_load(), NOT at import time: --control never needs a track list (it
+# drives the already-live queue via playlist_status/next/stop), so it must
+# not pay the probe's network cost or depend on re-probing landing on the
+# same pool --load picked. These URLs survive MCP restarts because they are
+# served externally, not by the in-process audio server.
 
 
 def pp(label: str, result) -> None:
@@ -100,6 +100,13 @@ async def phase_load(client: Client) -> None:
         )
     print(f"  Found {len(speaker_data)} speaker(s).")
 
+    # Select an external track pool now (probe primary, fall back on a
+    # single-host outage). Only --load needs this — see module docstring.
+    print("  Probing external track hosts …")
+    external_tracks = select_track_pool()
+    chosen_host = external_tracks[0]["url"].split("/")[2]
+    print(f"  Using track pool hosted on {chosen_host!r} ({len(external_tracks)} tracks).")
+
     # Idempotent setup: delete any leftover playlist from a prior run.
     try:
         await client.call_tool("playlist_delete", {"name": PLAYLIST_NAME})
@@ -111,9 +118,9 @@ async def phase_load(client: Client) -> None:
     await client.call_tool("playlist_create", {"name": PLAYLIST_NAME})
     await client.call_tool(
         "playlist_add_many",
-        {"name": PLAYLIST_NAME, "items": EXTERNAL_TRACKS},
+        {"name": PLAYLIST_NAME, "items": external_tracks},
     )
-    print(f"  Created playlist {PLAYLIST_NAME!r} with {len(EXTERNAL_TRACKS)} tracks.")
+    print(f"  Created playlist {PLAYLIST_NAME!r} with {len(external_tracks)} tracks.")
 
     # Start playback.
     result = await client.call_tool(

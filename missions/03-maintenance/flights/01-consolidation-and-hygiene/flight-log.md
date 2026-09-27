@@ -3,7 +3,7 @@
 **Flight**: [Consolidation & Hygiene](flight.md)
 
 ## Summary
-In-flight (2026-06-02). 12-leg maintenance flight executed via `/agentic-workflow`.
+Landed 2026-09-26. 12-leg maintenance flight executed via `/agentic-workflow`: legs 02–08 shipped in `881d152` (PR #8); legs 01, 09–12 completed on resume under plugin 1.1.0. Suite: 78 passed.
 
 ---
 
@@ -58,6 +58,45 @@ In-flight (2026-06-02). 12-leg maintenance flight executed via `/agentic-workflo
   - `status` no-session path: early-return guard (`if state in ("STOPPED", "") or not track.get("uri")`) stays in `status` before the helper call; the full-state return is `{**self._live_track_dict(track, speaker.player_name), "state": state}`.
 - **Notes**: `get_current_track_info()` is still called at each site (the advance + read pattern stays per-method); only the dict construction is deduplicated. `controller._track_state` left read-only with a divergence comment in the helper. 63 tests, 2.52s.
 
+### Leg 01 — gitignore-env
+- **Status**: landed
+- **Changes Made**:
+  - `.gitignore`: added a `.env` entry (with a comment noting `.env.example` is the tracked template) directly below the existing `.mcp.json` local-config entry.
+- **Notes**: `git check-ignore .env` → prints `.env`; `git check-ignore .env.example` → empty (template stays tracked); no local `.env` exists and `git log --all -- .env` is empty (never committed, nothing to scrub). `git status --short` shows only the intended edits, no removals.
+
+### Leg 10 — reword-tool-count-comment
+- **Status**: landed
+- **Changes Made**:
+  - `CLAUDE.md`: reworded the `AUDIO_MEDIA_ROOT` eager-parse bullet in "When extending" (now at line ~242, drifted from the leg's original `:240` citation) from "the other 32 tools keep working" to "the remaining tools keep working" — drops the bare count that read as drift against the file's own "35 tools" assertion.
+- **Notes**: Per the leg's citation audit, the actual tool count had moved from 32→35 since authoring; fix intent unchanged (drop the number, don't correct it to a new one). `grep -n "31" CLAUDE.md` → no hits. `grep -rn "35" CLAUDE.md README.md mcp_sonos/server.py` → the three "35 tools" assertions remain (`CLAUDE.md:8`, `server.py:49`, `README.md:14`/`449`). `grep -c "@mcp.tool" mcp_sonos/server.py` → 35, confirming the assertions are accurate.
+
+### Leg 11 — merge-queue-parent-id-comment
+- **Status**: landed
+- **Changes Made**:
+  - `mcp_sonos/playlists.py`: merged the duplicated `QUEUE_PARENT_ID` comment block (previously stating the `parent_id != "-1"` firmware invariant twice — once as "Must NOT be -1..." and again as a "NOTE: Flight 1 hardware finding...") into a single paragraph. Retained the rule (`parent_id` must not be `"-1"`; `"A:TRACKS"` is the conventional container) and the Flight 1 hardware-finding provenance in one pass; did not add a `CLAUDE.md` line reference (per the leg's design-review correction).
+- **Notes**: `grep -n "A:TRACKS" mcp_sonos/playlists.py` shows the declaration and its usage unchanged. Comment-only change; no code touched.
+
+### Leg 12 — codify-dir-listing-guard
+- **Status**: landed
+- **Changes Made**:
+  - `CLAUDE.md`: added a new bullet to "When extending" (alongside the cross-cutting-validation and eager-parse-env-var idioms) documenting that `audio_host.py`'s `list_directory` → 404 override is deliberate — the host binds `0.0.0.0` unauthenticated on the LAN (firewall-scoped, accepted threat model) and listing would expose the staged-file directory — and must be preserved on any refactor of the handler.
+- **Notes**: Confirmed `audio_host.py:78-80` still has the guard (`send_error(404)`) before documenting it. `grep -n "list_directory" CLAUDE.md` → the new bullet is present. Bullet matches the bold-lead-in / example / rationale format of the surrounding codified idioms.
+
+### Leg 09 — smoke-fallback-url
+- **Status**: landed
+- **Changes Made**:
+  - Added `_smoke_common.py` (repo root, sibling to the smoke scripts — not part of the `mcp_sonos` package, not collected by pytest) with `EXTERNAL_TRACKS_PRIMARY` (SoundHelix, unchanged), a new `EXTERNAL_TRACKS_FALLBACK` (a different host), `TRACK_POOLS`, a stdlib-only `_reachable(url, timeout)` probe (HEAD, retrying with a 1-byte ranged GET if the host rejects HEAD with 405/501), and `select_track_pool(pools, timeout)` which probes each pool's first URL in order and returns the first reachable one (falling through to the last pool, unprobed, if every candidate fails, so a total outage surfaces as a clear enqueue failure rather than an empty playlist).
+  - `queue_smoke.py`: removed the hardcoded `EXTERNAL_TRACKS` module constant; `main()` now calls `select_track_pool()` right after the hardware-reachability check and prints which host was selected. Docstring updated to describe the primary/fallback pool and the probe, with the single-host-outage-only caveat and the probe-runs-from-this-machine caveat.
+  - `reap_smoke.py`: removed the hardcoded `EXTERNAL_TRACKS` module constant; the pool selection call was placed inside `phase_load()` only (not at module import time), so `--control` never pays the probe's network cost and never depends on re-probing landing on the same pool `--load` picked — `--control` doesn't touch the track list at all, it only drives the already-live queue via `playlist_status`/`playlist_next`/`playlist_stop`. Docstring updated with the same primary/fallback + caveats language as `queue_smoke.py`.
+- **Notes**:
+  - Chosen fallback host: **filesamples.com** (`https://filesamples.com/samples/audio/mp3/sample{1,2,3}.mp3`) — a different host from SoundHelix. Verified 2026-09-26 from this machine: `curl -sI --max-time 5` on all three URLs returned `200`/`audio/mpeg`, and a ranged GET (`-r 0-15`) on each confirmed a real MP3 body (`ID3...` magic bytes), not an HTML placeholder. Several other public-sample candidates were tried and rejected first (hyperionics.com 404, sample-videos.com/jplayer.org serve HTML "not found" pages despite 200 status, noiseaddicts.com only had one guessable working path — not enough for a 3-track pool). Note the existing primary (SoundHelix) is also HTTPS-only, so choosing an HTTPS-only fallback is consistent with existing precedent, not a new regression against CLAUDE.md's HTTP-preferred guidance.
+  - Fallback-path verification (no hardware; per the leg's guidance to use a python one-liner, not a code hack left in the tree): ran `_smoke_common.select_track_pool()` unmodified against the real primary (selected SoundHelix, confirming the live host is up), then called it again with an unreachable dead-host pool substituted as the first argument — it correctly selected the filesamples fallback pool — and a third call with two dead pools confirmed the total-outage fallthrough returns the last pool rather than raising. No temporary code was left in `_smoke_common.py`, `queue_smoke.py`, or `reap_smoke.py`; `git status --short` shows only the intended new/modified files.
+  - `python -m py_compile queue_smoke.py reap_smoke.py _smoke_common.py` → clean.
+  - `pytest --collect-only -q` → 78 tests collected, `_smoke_common.py` not among them (confirms `testpaths=["tests"]` and `packages=["mcp_sonos"]` in `pyproject.toml` don't need changes for a new root-level helper).
+  - `timeout 300 .venv/bin/python -m pytest -q` → 78 passed in 1.40s (suite has grown from the flight-start baseline of 63/72 to 78 via unrelated tool additions since flight start; unaffected by this leg).
+  - `git status --short` → no MP3 or other binary added; only `_smoke_common.py` (new) and `queue_smoke.py`/`reap_smoke.py` (modified) from this leg's work. Did not touch `.gitignore`, `CLAUDE.md`, or `mcp_sonos/playlists.py` (owned by the concurrent Developer on legs 01/10/11/12).
+  - README has no description of the smoke scripts' track sourcing, so no README update was needed.
+
 ---
 
 ## Flight Director Notes
@@ -71,6 +110,17 @@ In-flight (2026-06-02). 12-leg maintenance flight executed via `/agentic-workflo
 - *Single flight review + commit* at the end (Phase 2d) over all uncommitted changes.
 
 **Design review (consolidated, 1 Developer, Sonnet):** all 12 legs approved (6 "approve", 6 "approve with changes"). Confirmed the green 63-test / ~3.0s baseline. Corrections incorporated into specs as "Design-review note" callouts on legs 02, 03, 05, 07, 11 — chiefly: corrected line refs (locate-by-symbol); leg 02 behavior-preservation (verify the controller's `invalidate_speakers_cache` zeros `_speakers_ts` before collapsing); leg 03 the two live-track readers are structurally incompatible (document divergence, don't force a shared base) and `status`'s early-return guard stays outside the helper; leg 05 the `_HOST_IP`/`_AUDIO_PORT`/`_MCP_URL` constants live only in `test_queue_path.py`; leg 07 must-NOT-fold list (the ordering/timeout/delegation tests) and the real merge set is 2-3, not 4. No re-review needed — changes were incorporations of the reviewer's own corrections.
+
+**Resume — 2026-09-26 (plugin 1.1.0).**
+- *State reconciliation.* Legs 02–08 landed and shipped to `main` in `881d152` (merged via PR #8) alongside out-of-flight work (`reboot` tool, soco bump); the original flight branch was deleted on merge. That commit's message claims "legs 02-11", but leg 11's code fix was never made — only its spec was edited. Legs 01, 09, 10, 11, 12 remain `ready` with no log entries. Suite has grown from 63 to 72+ tests since flight start (new tools, not consolidation).
+- *Branch.* Recreated `flight/01-consolidation-and-hygiene` off `main` (`fe7abf0`). Prep commit `38ad841` carries the init-project methodology sync (migrations 004–009) and an operator `.mcp.json` ignore line — kept separate from flight work.
+- *Protocol change.* Remaining legs run under the plugin-1.1.0 cadence: legs land uncommitted (`[LAND:leg]`), one flight-end review, one commit. Stale per-leg "Post-Completion Checklist" sections in the five remaining specs replaced with the current protocol line; citation audits appended.
+- *Leg 10 drift.* Tool count is now 35; the offending sentence moved to `CLAUDE.md:242` ("other 32 tools"). Same fix (drop the number); spec annotated rather than rewritten.
+- *Risk tiers.* All five remaining legs tiered **low**: 01/10/11/12 are single-line docs/comment/ignore edits; 09 touches only operator-run smoke scripts outside the unit net (`testpaths=["tests"]`), additive, no shared interface. No per-leg design review spawned; flight-end Reviewer covers the result.
+- *Grouping.* Legs 01, 10, 11, 12 (trivial, disjoint lines) implemented by one Developer; leg 09 by a second Developer in parallel (disjoint files: smoke scripts vs `.gitignore`/`CLAUDE.md`/`playlists.py`). Each Developer writes its own flight-log entries and leg statuses.
+- *Flight-end review.* One Reviewer (Sonnet) over all uncommitted changes (legs 01, 09–12): `[HANDOFF:confirmed]`, no blocking or non-blocking issues. HTTPS fallback host (filesamples.com) accepted — same scheme as the SoundHelix primary; HTTP candidates tried were dead or served HTML.
+- *Out-of-scope finding.* `CLAUDE.md` Versioning says `__version__` is currently `"0.2.0"`; it is `"0.3.0"`. Not a flight finding — to be logged as a squawk after landing.
+- *Landing.* All 12 legs `completed`; flight `landed`; mission criteria and Flight 1 checked off. Flight debrief pending (`/mission-control:flight-debrief`).
 
 ---
 

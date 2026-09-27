@@ -26,19 +26,19 @@ collapse the Architect's recommended three flights into one flight with one leg
 per finding.
 
 ## Success Criteria
-- [ ] S-1 — `.env` is gitignored; `git check-ignore .env` resolves
-- [ ] I-3 — the two stale-coordinator retry helpers are unified into one shared helper; the dead return value (I-4) is gone
-- [ ] I-5 — the live-coordinator-read dict is extracted into one helper in `playlists.py`, reconciled against `controller.py` `_track_state`
-- [ ] T-1 — `_say_all` has a `sleep_fn` injection seam; the say-all tests no longer pay the 1.0s sleep
-- [ ] T-5 — a shared track/transport builder + constants live in `conftest.py`
-- [ ] T-6 — a `worker_session` fixture replaces the ×4 boilerplate and fixes the missing-`mgr.stop` cleanup at `test_queue_path.py:520`
-- [ ] T-3 — the shared resume observable is parametrized; behavior-specific resume tests preserved
-- [ ] T-4 — the three skip-guard tests are parametrized
-- [ ] T-7 — `queue_smoke.py` + `reap_smoke.py` survive a single external-host outage via a fallback URL
-- [ ] I-9 — the `CLAUDE.md` "31 tools" phrasing is reworded
-- [ ] I-11 — the duplicated `QUEUE_PARENT_ID` comment block is merged
-- [ ] I-12 — the `audio_host.py` directory-listing guard is codified in `CLAUDE.md` "When extending"
-- [ ] The full test suite still passes (63 tests, adjusted count after consolidation) with no behavior change
+- [x] S-1 — `.env` is gitignored; `git check-ignore .env` resolves
+- [x] I-3 — the two stale-coordinator retry helpers are unified into one shared helper; the dead return value (I-4) is gone
+- [x] I-5 — the live-coordinator-read dict is extracted into one helper in `playlists.py`, reconciled against `controller.py` `_track_state`
+- [x] T-1 — `_say_all` has a `sleep_fn` injection seam; the say-all tests no longer pay the 1.0s sleep
+- [x] T-5 — a shared track/transport builder + constants live in `conftest.py`
+- [x] T-6 — a `worker_session` fixture replaces the ×4 boilerplate and fixes the missing-`mgr.stop` cleanup at `test_queue_path.py:520`
+- [x] T-3 — the shared resume observable is parametrized; behavior-specific resume tests preserved *(resolved: full enumeration found every resume test pins a distinct behavior — nothing to fold; see flight log leg 07)*
+- [x] T-4 — the three skip-guard tests are parametrized
+- [x] T-7 — `queue_smoke.py` + `reap_smoke.py` survive a single external-host outage via a fallback URL
+- [x] I-9 — the `CLAUDE.md` "31 tools" phrasing is reworded
+- [x] I-11 — the duplicated `QUEUE_PARENT_ID` comment block is merged
+- [x] I-12 — the `audio_host.py` directory-listing guard is codified in `CLAUDE.md` "When extending"
+- [x] The full test suite still passes (63 tests, adjusted count after consolidation) — 78 passed at flight end (suite grew with new tools) with no behavior change
 
 ## Stakeholders
 Maintainer (msieurthenardier). Self-deployed on home LAN. No external users.
@@ -76,6 +76,6 @@ N/A — none open at mission start.
 
 > **Note:** The maintainer chose a single-flight structure (one leg per finding).
 
-- [ ] Flight 1: Consolidation & Hygiene — all 12 actionable findings as atomic
+- [x] Flight 1: Consolidation & Hygiene — all 12 actionable findings as atomic
   legs (hygiene → source dedup → test seam/dedup/parametrization → smoke
   resilience → comment fixes)

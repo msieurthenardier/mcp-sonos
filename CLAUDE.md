@@ -239,10 +239,15 @@ re-synthesize.
   `AUDIO_MEDIA_ROOT` is read once at init and resolved into
   `self.media_root: Path | None`; the `is_dir()` check + extension
   allow-list run on every `play_file` call. Rationale: a misconfigured
-  path doesn't crash the MCP server at import time — the other 32 tools
+  path doesn't crash the MCP server at import time — the remaining tools
   keep working, and the affected tool returns a clear error pointing at
   the env var. Note: this trades startup-fast-fail for graceful
   degradation; pick accordingly per new env var.
+- **Directory listing stays disabled on the audio host.** `audio_host.py`
+  overrides `list_directory` to return 404 — the host binds `0.0.0.0`
+  unauthenticated on the LAN (firewall-scoped, accepted threat model), and
+  listing would let anyone on the LAN enumerate the staged-file directory.
+  Any refactor of the handler must preserve this guard.
 
 ## Versioning
 

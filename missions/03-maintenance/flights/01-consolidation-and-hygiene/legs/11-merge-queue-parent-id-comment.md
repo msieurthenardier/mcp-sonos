@@ -1,6 +1,6 @@
 # Leg: merge-queue-parent-id-comment
 
-**Status**: ready
+**Status**: completed
 **Flight**: [Consolidation & Hygiene](../flight.md)
 
 ## Objective
@@ -47,13 +47,8 @@ Merge the duplicated `QUEUE_PARENT_ID` audit comment in `playlists.py` so the `p
 
 ---
 
-## Post-Completion Checklist
+## Post-Completion
+Completion steps — status transitions, flight-log update, checking off in the parent flight, and commit — are Flight Control protocol, driven by the execution workflow (flight-end review + single commit). Do not commit; mark the leg `landed` and signal `[LAND:leg]`.
 
-**Complete ALL steps before signaling `[COMPLETE:leg]`:**
-
-- [ ] All acceptance criteria verified
-- [ ] Tests passing (N/A — comment only)
-- [ ] Update flight-log.md with leg progress entry
-- [ ] Set this leg's status to `completed`
-- [ ] Check off this leg in flight.md
-- [ ] Commit
+## Citation Audit (Flight Director, 2026-09-26 resume)
+- `mcp_sonos/playlists.py:34-41` — comment block above `QUEUE_PARENT_ID = "A:TRACKS"` still states the invariant twice (confirmed 2026-09-26). Commit `881d152`'s message claims legs 02-11, but only this leg's *spec* changed there; the code fix was never made.

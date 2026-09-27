@@ -1,6 +1,6 @@
 # Leg: codify-dir-listing-guard
 
-**Status**: ready
+**Status**: completed
 **Flight**: [Consolidation & Hygiene](../flight.md)
 
 ## Objective
@@ -47,16 +47,8 @@ Codify the `audio_host.py` directory-listing-disabled guard in `CLAUDE.md` "When
 
 ---
 
-## Post-Completion Checklist
+## Post-Completion
+Completion steps — status transitions, flight-log update, checking off in the parent flight, and commit — are Flight Control protocol, driven by the execution workflow (flight-end review + single commit). Do not commit; mark the leg `landed` and signal `[LAND:leg]`.
 
-**Complete ALL steps before signaling `[COMPLETE:leg]`:**
-
-- [ ] All acceptance criteria verified
-- [ ] Tests passing (N/A — docs only)
-- [ ] Update flight-log.md with leg progress entry
-- [ ] Set this leg's status to `completed`
-- [ ] Check off this leg in flight.md
-- [ ] If final leg of flight:
-  - [ ] Update flight.md status to `landed`
-  - [ ] Check off flight in mission.md
-- [ ] Commit all changes together (code + artifacts)
+## Citation Audit (Flight Director, 2026-09-26 resume)
+- `mcp_sonos/audio_host.py:78-80` — `def list_directory(self, path):  # block GET / enumeration` → `self.send_error(404)`; guard present (confirmed 2026-09-26). Binds `("0.0.0.0", self.port)` at line 82. Current CLAUDE.md "When extending" codified idioms: cross-cutting input validation, eager-parse env vars — add alongside those.
