@@ -1,6 +1,6 @@
 # Flight: Consolidation & Hygiene
 
-**Status**: landed
+**Status**: completed
 **Mission**: [Maintenance — Consolidation & Hygiene](../../mission.md)
 
 ## Contributing to Criteria
