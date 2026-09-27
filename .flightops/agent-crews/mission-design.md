@@ -6,7 +6,7 @@ and uses project-side agents to validate technical viability.
 ## Crew
 
 ### Architect
-- **Context**: {target-project}/
+- **Context**: project root (current working directory)
 - **Model**: Sonnet
 - **Role**: Validates technical viability of proposed outcomes. Ensures business
   goals align with what's actually possible given the codebase, stack, and
@@ -35,7 +35,7 @@ The Flight Director substitutes these variables in prompts at runtime:
 
 | Variable | Description |
 |----------|-------------|
-| `{project-slug}` | Project identifier from projects.md |
+| `{project-slug}` | Project identifier — the repository directory name, or the name from the git remote |
 
 ## Prompts
 
@@ -55,7 +55,7 @@ Evaluate:
 2. Architectural implications — does this require significant structural changes?
 3. Risk factors — what technical risks could block success?
 4. Constraints accuracy — are stated constraints complete and correct?
-5. Sizing — is the scope realistic for a mission (days-to-weeks)?
+5. Sizing — is the scope coherent for a mission: one recognizable outcome, with flight boundaries only at genuine decision or risk seams?
 
 Provide structured output:
 

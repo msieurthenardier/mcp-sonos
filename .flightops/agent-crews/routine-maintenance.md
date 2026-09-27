@@ -7,7 +7,7 @@ for severity assessment and roundtable moderation.
 ## Crew
 
 ### Inspector
-- **Context**: {target-project}/
+- **Context**: project root (current working directory)
 - **Model**: Sonnet
 - **Role**: Performs broad read-only codebase inspection across all applicable
   categories. Runs test suites, linters, type checkers, audit commands, and
@@ -15,7 +15,7 @@ for severity assessment and roundtable moderation.
 - **Actions**: inspect-codebase
 
 ### Security Reviewer
-- **Context**: {target-project}/
+- **Context**: project root (current working directory)
 - **Model**: Sonnet
 - **Role**: Performs focused manual security review of authentication flows,
   injection surfaces, secrets handling, CORS/CSP configuration, and data
@@ -24,7 +24,7 @@ for severity assessment and roundtable moderation.
 - **Actions**: review-security
 
 ### CI/CD Reviewer (optional)
-- **Context**: {target-project}/
+- **Context**: project root (current working directory)
 - **Model**: Sonnet
 - **Enabled**: false (enable when project has CI/CD pipelines)
 - **Role**: Reviews CI/CD pipeline configuration, build security, deployment
@@ -33,7 +33,7 @@ for severity assessment and roundtable moderation.
 - **Actions**: review-cicd
 
 ### Accessibility Reviewer (optional)
-- **Context**: {target-project}/
+- **Context**: project root (current working directory)
 - **Model**: Sonnet
 - **Enabled**: false (enable when project has user-facing UI)
 - **Role**: Reviews codebase for accessibility compliance against WCAG 2.1 AA
@@ -42,7 +42,7 @@ for severity assessment and roundtable moderation.
 - **Actions**: review-accessibility
 
 ### Architect
-- **Context**: {target-project}/
+- **Context**: project root (current working directory)
 - **Model**: Opus
 - **Role**: Reviews all reviewer findings alongside debrief context. Assigns
   severity per finding, challenges questionable assessments, moderates
@@ -103,7 +103,7 @@ The Flight Director substitutes these variables in prompts at runtime:
 
 | Variable | Description |
 |----------|-------------|
-| `{project-slug}` | Project identifier from projects.md |
+| `{project-slug}` | Project identifier — the repository directory name, or the name from the git remote |
 | `{applicable-categories}` | Numbered list of categories to inspect (1-7 always, 8-10 conditional) |
 | `{project-stack}` | Language, framework, test runner, linter, formatter, type checker, audit tool |
 | `{known-debt}` | Debt items from mission debrief and flight debriefs (if available, otherwise "None — ad-hoc inspection") |

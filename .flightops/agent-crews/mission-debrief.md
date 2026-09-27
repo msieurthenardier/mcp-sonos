@@ -6,7 +6,7 @@ both the human and a project-side Architect to capture strategic technical persp
 ## Crew
 
 ### Architect
-- **Context**: {target-project}/
+- **Context**: project root (current working directory)
 - **Model**: Sonnet
 - **Role**: Provides architectural perspective on mission outcomes. Evaluates
   whether the system evolved well across flights, identifies structural issues,
@@ -35,7 +35,7 @@ The Flight Director substitutes these variables in prompts at runtime:
 
 | Variable | Description |
 |----------|-------------|
-| `{project-slug}` | Project identifier from projects.md |
+| `{project-slug}` | Project identifier — the repository directory name, or the name from the git remote |
 
 ## Prompts
 
