@@ -15,12 +15,15 @@ driven by an agentic system, not a human CLI.
 
 ```bash
 # One-time setup
-python3 -m venv .venv && .venv/bin/pip install -e .
+python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 
 # Run the MCP server (stdio transport — for an agent to spawn)
 .venv/bin/python -m mcp_sonos.server
 # Or via uvx without a local checkout:
 uvx --from git+https://github.com/msieurthenardier/mcp-sonos mcp-sonos
+
+# Hardware-free unit suite (tests/) — run this first, on every change
+.venv/bin/python -m pytest -q
 
 # Smoke tests against real hardware (in-process FastMCP Client; same
 # code path the agent uses, no stdio in the middle). Need a reachable
@@ -36,7 +39,10 @@ SONOS_IPS=192.168.1.51,... .venv/bin/python reap_smoke.py --control  # reap-surv
 .venv/bin/python -m build --wheel
 ```
 
-No test framework, no linter configured. Smoke tests are the regression net.
+The pytest unit suite (`tests/`, hardware-free) is the primary regression
+net; smoke scripts above are the hardware-only secondary check, for
+behavior that only shows up against real speakers. No linter is
+configured.
 
 ## Architecture
 
@@ -234,6 +240,14 @@ re-synthesize.
   callers see a `ValueError`/`PlaylistError`. Future candidates for this
   pattern: speaker-name normalization, `AUDIO_PORT` range, playlist-name
   validation.
+- **Cross-cutting retry behavior** → same single-shared-module pattern, for
+  logic rather than validation. Example: `mcp_sonos/_retry.py::with_stale_coord_retry`
+  is a cycle-free leaf module (`controller.py` imports `playlists.py`, so the
+  retry helper couldn't live in either without creating a circular import) used
+  by `controller.py` (`say`) and `playlists.py` (`_play_via_queue`).
+  DI callbacks (`invalidate`, `resolve`) let each caller supply its own
+  cache-invalidation and re-resolution logic while sharing one retry-and-recover
+  implementation.
 - **Env vars that can be invalid (paths, ports, etc.)** → parse eagerly at
   `SonosController.__init__`, validate lazily at first use. Example:
   `AUDIO_MEDIA_ROOT` is read once at init and resolved into
@@ -251,7 +265,7 @@ re-synthesize.
 
 ## Versioning
 
-Single source of truth: `mcp_sonos/__init__.py` → `__version__` (currently `"0.2.0"`).
+Single source of truth: `mcp_sonos/__init__.py` → `__version__`.
 **Change the version here and nowhere else.**
 
 - `pyproject.toml` derives the package version from it via hatchling dynamic version
