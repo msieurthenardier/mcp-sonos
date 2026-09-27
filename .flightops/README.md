@@ -1,12 +1,12 @@
 # Flight Operations
 
-This directory contains reference materials for the [Flight Control](https://github.com/anthropics/flight-control) development methodology.
+This directory contains reference materials for the [Flight Control](https://github.com/msieurthenardier/mission-control) development methodology.
 
 ## Contents
 
 - **FLIGHT_OPERATIONS.md** — Quick reference for implementing missions, flights, and legs
 - **ARTIFACTS.md** — Project-specific configuration for how artifacts are stored
-- **agent-crews/** — Project crew definitions for each phase (who Mission Control works with)
+- **agent-crews/** — Project crew definitions for each phase (who the Flight Director works with)
 
 ## For AI Agents
 
@@ -23,7 +23,7 @@ When working on this project with Flight Control:
 
 | File | Synced? | Notes |
 |------|---------|-------|
-| README.md | Yes | Updated via `/init-project` |
-| FLIGHT_OPERATIONS.md | Yes | Updated via `/init-project` |
+| README.md | Yes | Updated via `/mission-control:init-project` |
+| FLIGHT_OPERATIONS.md | Yes | Updated via `/mission-control:init-project` |
 | ARTIFACTS.md | No | Project-specific, customize freely |
 | agent-crews/*.md | No | Project-specific, customize freely |

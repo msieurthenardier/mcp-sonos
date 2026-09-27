@@ -4,9 +4,16 @@ Verifies that an all-external playlist routes through the native queue engine
 (not the worker-thread engine) and that the Sonos queue advances tracks
 autonomously without MCP involvement.
 
-Three external MP3 tracks (SoundHelix) are used — NOT MCP-hosted ones — so the
-classifier routes to the native queue engine. The script:
-  1. Creates a playlist with three external tracks.
+Three external MP3 tracks are used — NOT MCP-hosted ones — so the
+classifier routes to the native queue engine. The track pool is chosen at
+runtime by `_smoke_common.select_track_pool()`: it probes a primary
+(SoundHelix) pool and, if that host is unreachable, falls back to a
+different host (filesamples.com). See `_smoke_common.py` for the pools and
+probe details, including the important caveat that this only covers a
+single-host outage (not "no network at smoke time" generally) and that the
+probe runs from this machine, not from the speaker itself. The script:
+  1. Creates a playlist with three external tracks (from whichever pool
+     the probe selected).
   2. Calls playlist_play and asserts engine == "native_queue" and
      queue_size == number of tracks.
   3. Prints now_playing so the operator can confirm the queue engaged.
@@ -42,28 +49,12 @@ for noisy in ("soco", "soco.services", "urllib3", "mcp", "FastMCP"):
 
 from fastmcp import Client
 
+from _smoke_common import select_track_pool
 from mcp_sonos.controller import SonosController
 from mcp_sonos.server import mcp, register_tools
 
 controller = SonosController()
 register_tools(mcp, controller)
-
-# External MP3 tracks from SoundHelix — these are NOT MCP-hosted, so the
-# classifier routes the playlist to the native Sonos queue engine.
-EXTERNAL_TRACKS = [
-    {
-        "url": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-        "title": "SoundHelix Song 1",
-    },
-    {
-        "url": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
-        "title": "SoundHelix Song 2",
-    },
-    {
-        "url": "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
-        "title": "SoundHelix Song 3",
-    },
-]
 
 PLAYLIST_NAME = "queue-smoke"
 SPEAKER = "Kitchen"
@@ -98,6 +89,12 @@ async def main() -> None:
                 "Set SONOS_IPS to the correct IPs for your household and retry."
             )
         pp("list_speakers", speakers_result)
+
+        # ---- select an external track pool (primary, fallback on outage) ---
+        print("Probing external track hosts …")
+        EXTERNAL_TRACKS = select_track_pool()
+        chosen_host = EXTERNAL_TRACKS[0]["url"].split("/")[2]
+        print(f"Using track pool hosted on {chosen_host!r} ({len(EXTERNAL_TRACKS)} tracks).")
 
         # ---- set up playlist ------------------------------------------------
         # Idempotent across runs: delete if exists, then create fresh.

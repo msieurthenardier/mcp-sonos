@@ -239,10 +239,15 @@ re-synthesize.
   `AUDIO_MEDIA_ROOT` is read once at init and resolved into
   `self.media_root: Path | None`; the `is_dir()` check + extension
   allow-list run on every `play_file` call. Rationale: a misconfigured
-  path doesn't crash the MCP server at import time — the other 32 tools
+  path doesn't crash the MCP server at import time — the remaining tools
   keep working, and the affected tool returns a clear error pointing at
   the env var. Note: this trades startup-fast-fail for graceful
   degradation; pick accordingly per new env var.
+- **Directory listing stays disabled on the audio host.** `audio_host.py`
+  overrides `list_directory` to return 404 — the host binds `0.0.0.0`
+  unauthenticated on the LAN (firewall-scoped, accepted threat model), and
+  listing would let anyone on the LAN enumerate the staged-file directory.
+  Any refactor of the handler must preserve this guard.
 
 ## Versioning
 
@@ -273,10 +278,16 @@ patch for fixes. Example: native-queue playback capability took it `0.1.0 → 0.
 
 ## Flight Operations
 
-This project uses [Flight Control](https://github.com/msieurthenardier/mission-control).
+This project uses [Flight Control](https://github.com/msieurthenardier/mission-control) via the `mission-control` Claude Code plugin. Skills are invoked as `/mission-control:<skill>` from this project's root.
 
-**Before any mission/flight/leg work, read these files in order:**
+**Before any mission/flight/leg/squawk work, read these files in order:**
 1. `.flightops/README.md` — What the flightops directory contains
 2. `.flightops/FLIGHT_OPERATIONS.md` — **The workflow you MUST follow**
 3. `.flightops/ARTIFACTS.md` — Where all artifacts are stored
 4. `.flightops/agent-crews/` — Project crew definitions for each phase (read the relevant crew file)
+
+**Flight Director role.** This session — the one the human talks to — is the Flight Director: it runs the Flight Control skills, plans directly, and orchestrates spawned crew, and never edits source itself. Spawned agents are crew, never the Flight Director. When a human says a leg is ready to implement, invoke `/mission-control:agentic-workflow`. Do not read the leg spec, plan execution steps, or execute commands directly — the skill orchestrates separate Developer and Reviewer agents and emits `[HANDOFF:...]` and `[COMPLETE:...]` signals. Planning skills (`/mission-control:mission`, `/mission-control:flight`, debriefs, `/mission-control:routine-maintenance`) produce artifacts only and never modify source files.
+
+**Spawned agents** (Developer, Reviewer, Architect, Executor, Validator) do not have the Skill tool. Everything they need is in `.flightops/`; they must not try to load plugin skills.
+
+**Methodology drift.** A SessionStart notice from the plugin means this project is behind the installed plugin version. Recommend `/mission-control:preflight-check` or `/mission-control:init-project` to bring it current; never apply migrations by hand.

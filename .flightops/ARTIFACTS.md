@@ -5,7 +5,7 @@ This project stores Flight Control artifacts as markdown files in the repository
 ## Directory Structure
 
 ```
-{target-project}/
+{project-root}/
 ├── missions/
 │   └── {NN}-{mission-slug}/
 │       ├── mission.md
@@ -18,14 +18,42 @@ This project stores Flight Control artifacts as markdown files in the repository
 │               ├── flight-debrief.md
 │               └── legs/
 │                   └── {NN}-{leg-slug}.md
-└── maintenance/
-    └── {YYYY-MM-DD}.md
+├── maintenance/
+│   └── {YYYY-MM-DD}.md
+├── squawks/
+│   └── {id}-{squawk-slug}.md
+├── service-reports/
+│   └── {id}-{report-slug}.md
+└── tests/
+    └── behavior/
+        ├── {slug}.md                       ← behavior-test spec (committed)
+        └── {slug}/runs/
+            └── {YYYY-MM-DD-HH-MM-SS}.md    ← run log (committed)
+
+# Evidence directory lives at an ephemeral path OUTSIDE the project tree:
+#   /tmp/behavior-tests/{project-slug}/{slug}/{YYYY-MM-DD-HH-MM-SS}/
+# Never written into tests/behavior/. Holds screenshots, snapshot dumps,
+# eval JSON, log captures. Local-only; cheap to regenerate by re-running.
+# Two reasons: (a) PII risk in screenshots/snapshots, (b) repo bloat.
 ```
 
 ## Naming Conventions
 
 - **Slugs**: Lowercase, kebab-case, derived from title (e.g., "User Authentication" → `user-authentication`)
 - **Sequence numbers**: Missions, flights, and legs use two-digit prefixes (`01`, `02`, etc.) for ordering
+- **Squawk ids**: Monotonically increasing integers, project-wide, zero-padded to a minimum of four digits and widening past that as needed (`0001`, `0002`, … `9999`, `10000`, …). Unbounded by design — a long-lived project will pass any fixed width. Never reused, even after a squawk is completed or escalated.
+- **Service report ids**: Same scheme as squawk ids, on a separate sequence.
+
+---
+
+## Git Conventions
+
+How flight work is named in version control. Skills read these — adjust them to match your VCS conventions.
+
+- **Flight branch**: `flight/{number}-{slug}` — created at flight start (`git checkout -b flight/{number}-{slug}`)
+- **Commit subject**: `flight/{number}: {description}`, with a `Mission: {mission-number}` trailer
+- **Squawk branch**: `squawk/{id}-{slug}` for a single squawk; `squawk/turnaround-{YYYY-MM-DD}` when completing a batch of two or more
+- **Squawk commit subject**: `squawk/{id}: {description}` for a single squawk; `squawk: turnaround {YYYY-MM-DD}` for a batch, with a `Squawks: {id}, {id}` trailer listing every id completed
 
 ---
 
@@ -237,19 +265,124 @@ How to confirm each criterion is met:
 
 ---
 
-## Post-Completion Checklist
+## Post-Completion
+Completion steps — status transitions, flight-log update, checking off in the parent flight, and commit — are Flight Control protocol, driven by the execution workflow. Not repeated here.
+```
 
-**Complete ALL steps before signaling `[COMPLETE:leg]`:**
+---
 
-- [ ] All acceptance criteria verified
-- [ ] Tests passing
-- [ ] Update flight-log.md with leg progress entry
-- [ ] Set this leg's status to `completed` (in this file's header)
-- [ ] Check off this leg in flight.md
-- [ ] If final leg of flight:
-  - [ ] Update flight.md status to `landed`
-  - [ ] Check off flight in mission.md
-- [ ] Commit all changes together (code + artifacts)
+### Squawk
+
+| Property | Value |
+|----------|-------|
+| Location | `squawks/{id}-{slug}.md` |
+| Created | When a small defect or routine servicing item is logged |
+| Updated | At completion, defer, or escalate time |
+| Managed by | `/mission-control:squawk` |
+
+A squawk stands **beside** the mission → flight → leg hierarchy, not inside it: no parent, no debrief. It covers work too small to warrant a mission — a single defect or a single routine update, with no design decisions, a bounded blast radius, and a clear way to verify. Anything failing those conditions is escalated to a flight or mission rather than grown in place.
+
+**Format:**
+
+```markdown
+# Squawk {id}: {Title}
+
+**Status**: open | in-progress | completed | deferred | escalated
+**Type**: defect | servicing
+**Severity**: grounding | routine
+**Reported**: {YYYY-MM-DD}
+**Completed**: {YYYY-MM-DD | —}
+
+## Report
+What was observed. For a defect: the symptom, where it shows up, how to reproduce.
+For servicing: what needs updating and why now.
+
+## Evidence
+Durable citations — `file:symbol`, a failing command and its output, a version delta.
+A few lines, not an investigation.
+
+## Corrective Action
+*(written at completion)*
+What was changed, and why that fix rather than another.
+
+## Verification
+How the fix was confirmed — the command run, the test added, the observation made.
+
+## Sign-Off
+*(written at completion)*
+**Reviewer**: {reviewer agent or human}
+**Verdict**: confirmed
+**Commit**: {sha or ref}
+
+## Disposition
+*(only for deferred or escalated squawks)*
+**Deferred**: {reason} — revisit when {trigger}
+**Escalated**: {which qualification criterion it failed and what was found} →
+[{Flight or Mission Title}]({path})
+```
+
+---
+
+### Service Report
+
+| Property | Value |
+|----------|-------|
+| Location | `service-reports/{id}-{slug}.md` |
+| Created | When a sweep reports a methodology trend upstream, or withholds one |
+| Updated | When upstream accepts, declines, or supersedes it |
+| Managed by | `/mission-control:service-report` |
+
+**Upstream reporting**: enabled
+
+*(Set to `enabled` or `disabled`. This gate fails closed: while it reads `unset`, or the line is
+missing, `/mission-control:service-report` stops and asks rather than assuming consent. Set it to
+`disabled` where posting to public repositories is not permitted. Per-report approval of the exact
+text still applies when it is `enabled` — this switch decides whether the channel exists at all.)*
+
+A service report carries one recurring Flight Control **methodology** trend back to the plugin as a GitHub issue. It is not about this project: a squawk records a defect in this codebase, a service report records a defect in the methodology every project shares. Created only when the operator runs `/mission-control:service-report`, which sweeps the accumulated debriefs for patterns — typically after several missions, on no cadence.
+
+The artifact is the local audit trail of exactly what left the project, and the evidence trail the next sweep reads to know this trend was already reported. It may reference local debriefs, flights, and missions; the submitted text never does.
+
+**Format:**
+
+```markdown
+# Service Report {id}: {Title}
+
+**Status**: draft | submitted | merged | withheld | accepted | declined | superseded
+**Reported**: {YYYY-MM-DD}
+**Occurrences**: {N} distinct occurrences across {M} missions *(or "below threshold — operator override")*
+**Span**: {YYYY-MM} to {YYYY-MM}
+**Plugin versions**: {first seen}–{latest seen}
+**Upstream**: {issue URL, or —}
+
+## Trend
+The pattern in methodology terms, and what it has cost across occurrences. A few lines.
+
+## Evidence
+*(local references; never submitted)*
+The debriefs, flights, and missions the observations came from.
+
+## Gate
+Which of the five qualification criteria were checked, and the outcome. Include the
+root-cause test that justified clustering these observations as one trend.
+
+## Prior Art
+What the search found: existing issues, PRs, or this project's earlier reports, and the
+classification — new | recurred on #{N} | variant of #{N} | duplicate of #{N} | already
+fixed upstream.
+
+## Redaction
+**Reviewer verdict**: clear
+**Approved by operator**: {YYYY-MM-DD}
+
+## Submitted
+*(the exact text sent upstream — title, then body, in a fenced block. Nothing else left the project.)*
+
+## Disposition
+*(once upstream responds)*
+**Accepted**: fixed in {version or PR}
+**Declined**: {reason given}
+**Superseded**: folded into #{N}
 ```
 
 ---
@@ -389,6 +522,7 @@ Chronological notes from work sessions.
 **Status**: {landed | aborted}
 **Duration**: {start} - {end}
 **Legs Completed**: {X of Y}
+**Plugin version**: {installed mission-control version}
 
 ## Outcome Assessment
 
@@ -421,6 +555,12 @@ Chronological notes from work sessions.
 ## Key Learnings
 {Insights for future flights}
 
+## Methodology Observations
+{Where Flight Control itself got in the way. Per observation: what the methodology did,
+what was expected instead, what it cost, and which skill and phase. Recorded, not judged —
+one flight cannot tell a defect from a bad afternoon. A later /mission-control:service-report
+sweep reads these across missions, and a vague entry is invisible to it.}
+
 ## Recommendations
 1. {Most impactful recommendation}
 2. {Second recommendation}
@@ -451,6 +591,7 @@ Chronological notes from work sessions.
 **Status**: {completed | aborted}
 **Duration**: {start} - {end}
 **Flights Completed**: {X of Y}
+**Plugin version**: {installed mission-control version}
 
 ## Outcome Assessment
 
@@ -477,7 +618,12 @@ Chronological notes from work sessions.
 {Insights to carry forward}
 
 ## Methodology Feedback
-{Improvements to Flight Control process itself}
+{Improvements to Flight Control process itself. Per finding: what happened, what it
+cost, which skill and phase, the plugin version in use, how many of this mission's
+flights it occurred in, and its destination — local fix, local lesson, or methodology
+observation. Observations are recorded here, not reported; a later
+/mission-control:service-report sweep reads them across missions. Note that findings
+here restate flight-debrief observations — the sweep counts the occurrence once.}
 
 ## Action Items
 - [ ] {Follow-up work}
@@ -543,17 +689,130 @@ Chronological notes from work sessions.
 
 ---
 
-## State Tracking
+### Behavior Test — Spec
 
-States are tracked in the frontmatter or status field of each artifact:
+| Property | Value |
+|----------|-------|
+| Location | `tests/behavior/{slug}.md` |
+| Created | Inline during planning conversations (flight, leg, mission, debrief, maintenance). See the authoring guide (`AUTHORING.md`) shipped with the mission-control plugin's behavior-test skill. |
+| Updated | When the spec drifts from observed system behavior |
+| Purpose | Re-runnable, AI-driven, multi-step acceptance test against real UI / API / shell / filesystem |
+| Run via | `/mission-control:behavior-test {slug}` |
 
-| Artifact | States |
-|----------|--------|
-| Mission | `planning` → `active` → `completed` (or `aborted`) |
-| Flight | `planning` → `ready` → `in-flight` → `landed` → `completed` (or `aborted`) |
-| Leg | `planning` → `ready` → `in-flight` → `landed` → `completed` (or `aborted`) |
+The run skill executes tests using the **Witnessed** verification pattern — every action is judged by an independent Validator agent. The pattern guarantees that the agent that did the work is never the same agent that decides whether the work was correct.
+
+**Format:**
+
+```markdown
+# Behavior Test: {Title}
+
+**Slug**: `{slug}`
+**Status**: draft | active | archived
+**Created**: {YYYY-MM-DD}
+**Last Run**: {YYYY-MM-DD-HH-MM-SS | never}
+**Cache:** *(optional; default `cold`. Set to `warm` to skip cache-defeat — see AUTHORING.md "Cache mode".)*
+
+## Intent
+One paragraph: what this test verifies and why this paradigm fits (vs unit/integration tests).
+
+## Preconditions
+- Environment / fixture state required before running.
+- Each precondition is operator-checkable; the run skill confirms readiness before spawning agents.
+
+## Observables Required
+What kinds of observables the test reads — and which apparatus (MCP / tool) measures each. The Executor discovers apparatus by name pattern at run time.
+
+- browser (DOM state, page content — measured via chrome-devtools, playwright, or similar)
+- shell (stdout, stderr, exit code — measured via Bash)
+- http (response status / body / headers — measured via curl via shell or dedicated MCP)
+- filesystem (file contents, directory listings — measured via Read / Write / Bash)
+
+## Steps
+
+| # | Actions | Expected Results |
+|---|---------|------------------|
+| 1 | Navigate browser to `{url}`. Wait for `{element}`. Click `{element}`. | `{observable result}` — e.g., page loads, toggle is in expected state, etc. |
+| 2 | (Setup row, no judgment) | (empty) |
+| 3 | (Wait point, no actions) | Within `{timeout}`, `{observable result}`. |
+| 4 | Multi-action: do X, then do Y, then do Z. | Multi-expectation: A is true AND B is true. |
+
+**Row conventions:**
+- One row = one logical checkpoint (may bundle multiple actions + multiple expected results).
+- Actions and Expected Results are in plain English — human-performable.
+- Empty Actions = wait point; the Executor idles while the Validator polls.
+- Empty Expected Results = pure setup; the Validator skips judgment.
+- Use `[a11y]` marker in Expected Results to flag accessibility-relevant checks (picked up by the optional Accessibility Validator).
+
+## Out of Scope
+What this test does NOT verify (link related tests).
+
+## Variants (optional)
+Parametrized re-runs with different inputs.
+```
+
+---
+
+### Behavior Test — Run Log
+
+| Property | Value |
+|----------|-------|
+| Location | `tests/behavior/{slug}/runs/{YYYY-MM-DD-HH-MM-SS}.md` |
+| Created | At the end of each `/mission-control:behavior-test {slug}` invocation |
+| Purpose | Per-run record: verdict, per-step results, Executor + Validator trace, evidence references |
+
+**Format:**
+
+```markdown
+# Behavior Test Run: {slug} — {timestamp}
+
+**Spec**: [tests/behavior/{slug}.md](../{slug}.md)
+**Status**: pass | fail | partial | aborted
+**Started**: {iso8601}
+**Completed**: {iso8601}
+**Duration**: {hh:mm:ss}
+**Executor**: {sub-agent id}
+**Validator**: {sub-agent id}
+
+## Summary
+{n_pass} / {n_total} steps passed. {n_fail} failed; {n_inconclusive} inconclusive.
+
+## Step Results
+
+### Step {N} — {PASS | FAIL | INCONCLUSIVE | SKIPPED}
+- **Actions taken**: {executor's report of what was performed}
+- **Raw state**: {one-line summary or excerpt}
+- **Expected**: {verbatim from spec}
+- **Verdict**: {pass/fail/inconclusive} — {validator's reasoning}
+- **Evidence**: [{relative path}](./{ts}/{filename})
+- **Validator notes**: {optional}
+- **Operator decision**: {continued | halted | rerun-step} (only when step failed)
+
+## Orchestrator Notes
+{Decisions made during the run: model preferences, specialized validators spawned, operator interventions.}
+
+## Closing Summaries
+
+### Executor closing
+{Executor's freeform closing summary — anomalies, environment hiccups.}
+
+### Validator closing
+{Validator's freeform closing summary — spec-quality observations, patterns of failure.}
+
+## Operator Notes
+{Post-run reflections.}
+```
+
+**Evidence directory**: `/tmp/behavior-tests/{project-slug}/{slug}/{ts}/` — outside the project tree, never committed. Holds screenshots, snapshot dumps, response bodies, file captures referenced by the run log. Skipping commit is deliberate: evidence routinely captures operator-visible UI (member lists, real-name peers, profile chrome) and would be repo bloat. Re-derive by re-running the spec.
+
+---
+
+## Status Encoding
+
+Each artifact records its status in a `**Status**:` line (shown in the Format blocks above). Use that one encoding — don't split status across frontmatter and status lines. The valid status values and lifecycle for each artifact type are Flight Control protocol, owned by the skills; this file records status, it doesn't define the value set.
 
 ## Conventions
+
+Project policies chosen at init — revise to taste:
 
 - **Immutability**: Never modify legs once `in-flight`; create new ones instead
 - **Append-only logs**: Flight logs are append-only during execution

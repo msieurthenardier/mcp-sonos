@@ -31,6 +31,12 @@ env/
 .DS_Store
 Thumbs.db
 
+# Local MCP server config (machine-specific IPs, for testing)
+.mcp.json
+
+# local env (real LAN IPs) — never commit; .env.example is the template
+.env
+
 # Runtime artifacts that don't belong in source
 *.log
 *.pid

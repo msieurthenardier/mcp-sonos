@@ -6,7 +6,7 @@ technical spec and uses project-side agents to validate against the real codebas
 ## Crew
 
 ### Architect
-- **Context**: {target-project}/
+- **Context**: project root (current working directory)
 - **Model**: Sonnet
 - **Role**: Reviews flight specs for technical soundness. Validates design
   decisions, prerequisites, technical approach, and leg breakdown against
@@ -29,7 +29,7 @@ The Flight Director substitutes these variables in prompts at runtime:
 
 | Variable | Description |
 |----------|-------------|
-| `{project-slug}` | Project identifier from projects.md |
+| `{project-slug}` | Project identifier — the repository directory name, or the name from the git remote |
 | `{flight-number}` | Current flight number |
 | `{flight-artifact-path}` | Path to the flight artifact file |
 

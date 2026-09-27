@@ -1,6 +1,6 @@
 # Leg: gitignore-env
 
-**Status**: ready
+**Status**: completed
 **Flight**: [Consolidation & Hygiene](../flight.md)
 
 ## Objective
@@ -47,13 +47,8 @@ Add `.env` to `.gitignore` so a real-IP `.env` can never be committed to the pub
 
 ---
 
-## Post-Completion Checklist
+## Post-Completion
+Completion steps — status transitions, flight-log update, checking off in the parent flight, and commit — are Flight Control protocol, driven by the execution workflow (flight-end review + single commit). Do not commit; mark the leg `landed` and signal `[LAND:leg]`.
 
-**Complete ALL steps before signaling `[COMPLETE:leg]`:**
-
-- [ ] All acceptance criteria verified
-- [ ] Tests passing (N/A — no code change; suite unaffected)
-- [ ] Update flight-log.md with leg progress entry
-- [ ] Set this leg's status to `completed`
-- [ ] Check off this leg in flight.md
-- [ ] Commit
+## Citation Audit (Flight Director, 2026-09-26 resume)
+- `.gitignore` (2026-09-26): no `.env` entry; `git check-ignore .env` empty. No local `.env` exists and `git log --all -- .env` is empty (never committed). A `.mcp.json` ignore entry was added in the prep commit `38ad841` — unrelated, leave it.

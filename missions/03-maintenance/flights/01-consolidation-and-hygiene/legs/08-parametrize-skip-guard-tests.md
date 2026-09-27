@@ -1,6 +1,6 @@
 # Leg: parametrize-skip-guard-tests
 
-**Status**: landed
+**Status**: completed
 **Flight**: [Consolidation & Hygiene](../flight.md)
 
 ## Objective

@@ -1,6 +1,6 @@
 # Leg: smoke-fallback-url
 
-**Status**: ready
+**Status**: completed
 **Flight**: [Consolidation & Hygiene](../flight.md)
 
 ## Objective
@@ -20,11 +20,11 @@ Give `queue_smoke.py` and `reap_smoke.py` a fallback external MP3 URL so a singl
 - A single host outage degrades neither acceptance path.
 
 ## Acceptance Criteria
-- [ ] `queue_smoke.py` and `reap_smoke.py` reference at least two distinct external MP3 sources (primary + fallback), not SoundHelix alone
-- [ ] The scripts probe/select a reachable source at runtime (e.g. a HEAD/GET reachability check, or try-next on enqueue failure) rather than hardcoding one host
-- [ ] With the primary URL made deliberately unreachable, the scripts proceed using the fallback (dry-run or code-path inspection confirms)
-- [ ] No MP3 file is committed to the repo (`git status` shows no new binary); the `.gitignore` audio-blob exclusions are unaffected
-- [ ] The unit suite is unaffected (these scripts are not collected by `testpaths=["tests"]`)
+- [x] `queue_smoke.py` and `reap_smoke.py` reference at least two distinct external MP3 sources (primary + fallback), not SoundHelix alone
+- [x] The scripts probe/select a reachable source at runtime (e.g. a HEAD/GET reachability check, or try-next on enqueue failure) rather than hardcoding one host
+- [x] With the primary URL made deliberately unreachable, the scripts proceed using the fallback (dry-run or code-path inspection confirms)
+- [x] No MP3 file is committed to the repo (`git status` shows no new binary); the `.gitignore` audio-blob exclusions are unaffected
+- [x] The unit suite is unaffected (these scripts are not collected by `testpaths=["tests"]`)
 
 ## Verification Steps
 - Read both scripts: confirm primary + fallback sources and the selection logic
@@ -64,13 +64,9 @@ Give `queue_smoke.py` and `reap_smoke.py` a fallback external MP3 URL so a singl
 
 ---
 
-## Post-Completion Checklist
+## Post-Completion
+Completion steps — status transitions, flight-log update, checking off in the parent flight, and commit — are Flight Control protocol, driven by the execution workflow (flight-end review + single commit). Do not commit; mark the leg `landed` and signal `[LAND:leg]`.
 
-**Complete ALL steps before signaling `[COMPLETE:leg]`:**
-
-- [ ] All acceptance criteria verified
-- [ ] Tests passing (unit suite unaffected)
-- [ ] Update flight-log.md with leg progress entry
-- [ ] Set this leg's status to `completed`
-- [ ] Check off this leg in flight.md
-- [ ] Commit
+## Citation Audit (Flight Director, 2026-09-26 resume)
+- `queue_smoke.py:EXTERNAL_TRACKS` (lines ~51-66) and `reap_smoke.py:EXTERNAL_TRACKS` (lines ~59-74): SoundHelix-only, all `https://www.soundhelix.com/examples/mp3/SoundHelix-Song-{1,2,3}.mp3`. Confirmed 2026-09-26.
+- **FD design note:** CLAUDE.md "Stream format reality" — plain HTTP MP3 is the safe Sonos path; HTTPS is fragile. Prefer a fallback host that serves plain-HTTP MP3 (verify it actually responds with an `audio/mpeg` body before choosing it). The reachability probe must use a short timeout (≤5 s) so a dead primary doesn't stall the smoke. Probe from the MCP host is a proxy for speaker reachability — acceptable for an operator-run smoke; say so in the docstring.

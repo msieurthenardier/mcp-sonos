@@ -6,7 +6,7 @@ human and project-side agents to capture both execution and design perspectives.
 ## Crew
 
 ### Developer
-- **Context**: {target-project}/
+- **Context**: project root (current working directory)
 - **Model**: Sonnet
 - **Role**: Provides developer perspective on flight execution. Reviews what was
   built, identifies technical debt introduced, evaluates implementation quality,
@@ -14,7 +14,7 @@ human and project-side agents to capture both execution and design perspectives.
 - **Actions**: debrief-interview
 
 ### Architect
-- **Context**: {target-project}/
+- **Context**: project root (current working directory)
 - **Model**: Sonnet
 - **Role**: Closes the design feedback loop. Evaluates whether the design decisions
   made during flight planning held up in practice. Reviews architectural impact of
@@ -48,7 +48,7 @@ The Flight Director substitutes these variables in prompts at runtime:
 
 | Variable | Description |
 |----------|-------------|
-| `{project-slug}` | Project identifier from projects.md |
+| `{project-slug}` | Project identifier — the repository directory name, or the name from the git remote |
 | `{flight-number}` | Current flight number |
 | `{flight-artifact-path}` | Path to the flight artifact file |
 

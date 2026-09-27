@@ -1,6 +1,6 @@
 # Leg: reword-tool-count-comment
 
-**Status**: ready
+**Status**: completed
 **Flight**: [Consolidation & Hygiene](../flight.md)
 
 ## Objective
@@ -42,13 +42,8 @@ Reword the `CLAUDE.md` "the other 31 tools" phrasing so it no longer reads as dr
 
 ---
 
-## Post-Completion Checklist
+## Post-Completion
+Completion steps — status transitions, flight-log update, checking off in the parent flight, and commit — are Flight Control protocol, driven by the execution workflow (flight-end review + single commit). Do not commit; mark the leg `landed` and signal `[LAND:leg]`.
 
-**Complete ALL steps before signaling `[COMPLETE:leg]`:**
-
-- [ ] All acceptance criteria verified
-- [ ] Tests passing (N/A — docs only)
-- [ ] Update flight-log.md with leg progress entry
-- [ ] Set this leg's status to `completed`
-- [ ] Check off this leg in flight.md
-- [ ] Commit
+## Citation Audit (Flight Director, 2026-09-26 resume)
+- **Drifted since authoring.** The tool count is now **35** (`grep -c '@mcp.tool' mcp_sonos/server.py` = 35; `CLAUDE.md:8` and `README.md:449` both say 35). The offending sentence is now `CLAUDE.md:242` — "the other 32 tools keep working" (in the `AUDIO_MEDIA_ROOT` eager-parse bullet of "When extending"), stale again. The fix is unchanged in intent: drop the number ("the remaining tools keep working"). Read the '31'/'32' references in the Context, Acceptance Criteria and Verification sections as '32'/'35' respectively; the criterion is simply that no bare count remains in that sentence and the 35-tool assertions stay accurate.
