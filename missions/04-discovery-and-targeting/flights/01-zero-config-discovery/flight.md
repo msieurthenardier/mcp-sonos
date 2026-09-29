@@ -1,6 +1,6 @@
 # Flight: Zero-Config Discovery
 
-**Status**: landed
+**Status**: completed
 **Mission**: [Zero-Config Discovery & Deterministic Speaker Targeting](../../mission.md)
 
 ## Contributing to Criteria

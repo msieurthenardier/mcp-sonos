@@ -415,3 +415,12 @@ green with no anomalies. Leg 03 not yet run.
 - Flight status is `landed`, and it is checked off in `mission.md`. PR #11
   was marked ready for review. "Code merged" remains open until the operator
   merges.
+
+### 2026-09-29: Debrief
+- Flight debrief written, based on the Developer and Architect debrief
+  interviews. The human interview was skipped under the autonomous mission
+  authorization; the flight log is comprehensive.
+- Squawks 0004 (defect: `list_speakers` fails wholesale) and 0005
+  (servicing: document the learned-seed state) were logged `open`.
+- Flight status is `completed`, marked by the Flight Director under the
+  autonomous authorization. PR #11 is awaiting the operator's merge.
