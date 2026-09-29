@@ -374,3 +374,36 @@ green with no anomalies. Leg 03 not yet run.
   The leg is marked `ready`. [HANDOFF:review-needed]
 
 ### 2026-09-28 — Flight review: Reviewer [HANDOFF:confirmed] for legs 01–02 (118 passed); one non-blocking doc nit (README stage count) fixed at commit; legs 01–02 → completed; leg 03 (hardware behavior test) pending.
+
+### 2026-09-28: Flight commit, PR, and leg 03 designed
+- Flight commit `b9dee81` was pushed, and draft PR #11 is open.
+- **Leg 03 `hardware-discovery-verification`: tiered LOW-RISK.** It changes
+  no code; it is acceptance verification only. No design review is needed.
+  Running `/mission-control:behavior-test zero-config-discovery`.
+
+### 2026-09-29: Leg 03 `hardware-discovery-verification` completed
+- `/mission-control:behavior-test zero-config-discovery` **passed 8/8**. Run
+  log: `tests/behavior/zero-config-discovery/runs/2026-09-29-02-27-28.md`.
+- Execution: live mode, with Executor and Validator on Sonnet and cold cache.
+  The system under test was `b9dee81`.
+- Timings:
+
+  | Scenario | Cold call | Later calls |
+  |---|---|---|
+  | No configuration | 0.84–1.45 s | 0.19–0.25 s |
+  | Only Kitchen configured | 0.52 s | — |
+  | Dead seed + Patio | 1.49 s | — |
+  | All seeds dead | 3.90 s | refresh 2.24 s |
+
+  The all-dead-seeds case: every call re-probes each dead configured seed,
+  at about 1 s each.
+- Step 7's diagnostic error named each stage and the three env hints.
+- **Carried to the debrief**: configured seeds are re-probed ahead of learned
+  seeds on every discovery, so a stale `SONOS_IPS` costs about 1 s per dead
+  entry per refresh. A candidate follow-up is to try learned seeds before
+  configured ones, or to demote configured seeds that fail. The spec now says
+  step 6's missing timing bound is deliberate, following the Validator's
+  readability note.
+- The spec status was promoted from `draft` to `active`.
+- The leg is marked `completed`. It is a verification-only leg, so it had no
+  code and needed no review.
