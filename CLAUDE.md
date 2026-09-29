@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 An MCP server (FastMCP) that exposes a Sonos household for local LAN
-control via SoCo's UPnP. 35 tools across discovery, transport, volume,
+control via SoCo's UPnP. Tools span discovery, transport, volume,
 grouping, TTS announcements, maintenance (reboot), live-radio streaming
 (`play_stream`), web-page playlist extraction (`playlist_from_page`), and
 in-memory playlists. Designed to be
@@ -36,6 +36,7 @@ uvx --from git+https://github.com/msieurthenardier/mcp-sonos mcp-sonos
 .venv/bin/python reap_smoke.py --load     # reap-survival phase 1: loads queue + exits (= the reap)
 .venv/bin/python reap_smoke.py --control  # reap-survival phase 2: fresh process drives the live queue
 .venv/bin/python discovery_smoke.py --runs 1  # discovery pipeline: list_speakers xN + refresh_speakers
+.venv/bin/python targeting_smoke.py topology  # target-set behavior-test apparatus (see --help for every subcommand)
 
 # Build wheel (sanity check on packaging changes)
 .venv/bin/pip install build
@@ -64,13 +65,70 @@ per process. Owns:
 - The TTS cache directory
 - The `PlaylistManager`
 
-Two helpers in `controller.py` are non-obvious but load-bearing:
+Three helpers in `controller.py` are non-obvious but load-bearing:
 - `_coordinator_of(speaker)` — returns the speaker itself if SoCo
   reports `coordinator=None` (transient post-group-dissolve state).
-- `_group_members_of(speaker)` — same guard for group enumeration.
+- `_group_members_of(speaker)` — same guard for group enumeration, by name.
+- `_group_member_uids_of(speaker)` — same guard, by UID (used by the
+  target-group planner/executor, which addresses speakers by UID).
 Every method that touches `speaker.group.coordinator` or
-`speaker.group.members` must go through these, otherwise rapid
+`speaker.group.members` must go through one of these, otherwise rapid
 grouping changes will produce `AttributeError: NoneType ...` crashes.
+
+**`mcp_sonos/targeting.py`** (Flight 2) is the pure, I/O-free planner
+behind every audio tool's target-set grouping (`play_url`, `play_file`,
+`play_stream`, `say`). It's a cycle-free leaf module, like `_retry.py`
+and `_urls.py` — never imports `soco`, never sleeps, never mutates
+anything. `plan_target_group(topology, targets, *, detach)` takes a
+`GroupInfo` topology snapshot (coordinator UID + member UIDs + the
+coordinator's transport state, one entry per group) and an ordered list
+of target UIDs, and returns a `TargetPlan`: which coordinators to stop,
+in what order to unjoin and join, which UIDs end up as bystanders, and
+the plan's `final_members` (the expected membership to confirm against —
+for `detach=False` this can be a superset of the targets, since merged
+groups pull in their other members too). The planner enforces, by
+construction and by an internal simulate-and-check pass
+(`_check_join_invariant`), that no `join` in the plan ever targets a UID
+that still coordinates other members at that point in the sequence — see
+the invariant below.
+
+`SonosController` owns the I/O half, split in two:
+- `_plan_targets(names, *, detach)` — read-only. Resolves names via
+  `_resolve` (dedupes by UID, keeping the first occurrence), clears
+  SoCo's `ZoneGroupState` cache once per household (see the invariant
+  below), snapshots the live topology, and calls `plan_target_group`.
+- `_execute_plan(ctx)` — issues the plan's stops, then unjoins, then
+  joins, confirms the resulting topology by polling (never a fixed
+  sleep — see the Flight 1 debrief's recommendation), and raises
+  `GroupingError` (no rollback) on a mid-step exception, a confirmation
+  timeout, or a bystander whose coordinator is still `PLAYING` after
+  separation.
+
+For `play_url` and `say`, grouping happens **inside** `_with_queue_resume`'s
+clip phase (the callable passed as `run_clip`), so the pre-existing
+native-queue snapshot reads the chosen coordinator's `PLAYING` state
+*before* stop-first runs. Splitting `_plan_targets` (before the snapshot)
+from `_execute_plan` (inside it) is what makes this ordering possible —
+see Flight 2's "Plan / execute split around queue resume" design
+decision if you're touching this.
+
+**Grouping invariants** (hardware-verified 2026-09-29, Flight 2):
+- **Never `join()` a speaker that currently coordinates other members.**
+  Verified on hardware: a coordinator-with-followers' `join()` call
+  didn't even move it — coordination silently moved to a different
+  speaker instead. Every `join` the executor issues is on a speaker the
+  plan has already made standalone (via an earlier `unjoin`, or because
+  it was never a coordinator to begin with).
+- **A coordinator's `unjoin()` delegates its remaining followers to a
+  firmware-chosen new coordinator** — they do NOT each become standalone.
+  A follower's `unjoin()` only detaches that one speaker; its former
+  group is otherwise unaffected.
+- **Always clear SoCo's `ZoneGroupState` cache before a topology read
+  used for grouping decisions**, not just before a forced re-discovery.
+  `_plan_targets` does this unconditionally on every call (a regroup made
+  moments ago — by the Sonos app, or another call — must never feed the
+  planner stale topology), and the confirmation poll clears it before
+  every read too (SoCo's own cache is 5s).
 
 **`mcp_sonos/audio_host.py`** — persistent threaded HTTP server. Sonos
 plays HTTP URIs, not local paths, so we host the TTS cache (and any
@@ -145,11 +203,34 @@ firmware to discard the title field; any other value preserves it.
   correct title depending on firmware version and how the item was
   injected. Do not assert on `title` in tests or agent logic — prefer
   `artist` and `album`, which are more reliably populated.
-- **`say("all")` leaves all speakers ungrouped after the clip.**
+- **`say(["all"])` leaves all speakers ungrouped after the clip.**
   `_say_all` dissolves all groups, forms party mode, plays the clip,
   then dissolves again. No group reconstruction occurs. This is
   state-destructive: any custom groupings before the call are gone.
-  The agent must re-group speakers explicitly if needed.
+  The agent must re-group speakers explicitly if needed. `detach` is
+  ignored for `["all"]` — the broadcast is already whole-house, and
+  `"all"` mixed with other names raises `ValueError` (only `say`
+  accepts the sentinel at all; the other three audio tools reject it).
+- **`detach` (default `True`) reshapes group topology as a side effect
+  of every audio-sending tool, not just `say`.** By default, `play_url`,
+  `play_file`, `play_stream`, `say`, `playlist_play`, and
+  `playlist_from_page` (when given `speakers`) detach their target
+  speakers from whatever they were grouped with, group them together, and
+  stop (and leave stopped) any bystander that was grouped with a target
+  but isn't itself one. Groups containing no target are never touched.
+  `detach=False` opts into the old per-group behavior instead — nothing
+  is stopped, and if the targets span more than one group, those groups
+  are merged (pulling in their other, non-target members too, which is
+  the deliberate point of the literal "each target's existing group
+  plays as-is" contract). See `targeting.py`'s module docstring and the
+  Flight 2 design decisions for the full algorithm.
+- **`playlist_from_page(speakers=[])` is rejected, not treated as
+  omitted.** Only `speakers=None` (the default — i.e. the parameter left
+  out) means "just build the playlist." An explicit empty list reaches
+  `playlist_play` -> `_plan_targets`, which raises the same
+  `ValueError` every other target-set tool raises for zero targets. The
+  playlist is still built before that error surfaces (creation happens
+  unconditionally; only the optional play step can fail this way).
 - **`next`/`previous` no-session are best-effort (no stale-coord
   retry).** When `next_track` / `previous_track` are called with no
   active worker session, they call `coord.next()` / `coord.previous()`
@@ -171,6 +252,27 @@ grouping changes. Keying by coordinator UID breaks the moment someone
 groups the speaker (the lookup goes to a different key) — this was
 the first design and it crashed immediately during multi-test runs.
 If you refactor, preserve the speaker-UID keying invariant.
+
+**Target sets (Flight 2).** `SonosController.playlist_play(speakers, ...)`
+forms the target group first (`_plan_targets` / `_execute_plan`, same as
+`play_url`/`say`), then calls `PlaylistManager.play(c0.player_name, ...)`
+— `c0`, the chosen coordinator, is the "named speaker" the session gets
+keyed on. The group forms once, at start, and is **not** re-imposed
+mid-playlist; if someone regroups by hand afterwards, the playlist follows
+`c0`, same as always.
+
+Because the agent may now name **any member** of that group in a
+control-tool call, not just `c0`, `next_track`/`previous_track`/`stop`/
+`status` look up the session via `PlaylistManager._session_for(speaker,
+coord)`: try the named speaker's own UID first, then fall back to the UID
+of that speaker's *current* coordinator. One helper backs all four call
+sites. **Accepted limitation**: the fallback only recovers a session when
+the named speaker's current coordinator is still `c0` — if `c0` is later
+made a follower of a different coordinator outside this MCP (the `group`
+tool, the Sonos app), a control-tool call naming a member of that new
+group misses the session. In practice the worker's own URI-mismatch
+takeover detection usually ends such a session within one poll anyway —
+same best-effort class as the grouping-changes caveat below.
 
 Worker signals: `stop_event`, `skip_event`, `back_event` are
 `threading.Event`s. Worker polls them at 4 Hz inside its inner wait
@@ -242,7 +344,11 @@ re-synthesize.
   `Annotated[..., Field(description=...)]` so the agent gets useful
   parameter descriptions.
 - Anything that touches groups must use `_coordinator_of` and
-  `_group_members_of`. Don't bypass them.
+  `_group_members_of` (or `_group_member_uids_of` for UID-based reads).
+  Don't bypass them. Anything that *changes* group topology must go
+  through `targeting.py`'s planner plus `_plan_targets`/`_execute_plan` —
+  never call `.join()`/`.unjoin()` ad hoc against a speaker that might
+  currently coordinate others (see the grouping invariants above).
 - **Any new forced-refresh path must route through `SonosController._invalidate_speakers()`,
   not just reset `_speakers_ts`.** SoCo caches each household's
   `ZoneGroupState` for 5s process-wide (`POLLING_CACHE_TIMEOUT`,

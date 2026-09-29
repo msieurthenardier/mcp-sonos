@@ -38,12 +38,12 @@ async def main() -> None:
         pp("list_speakers", await client.call_tool("list_speakers"))
         pp("list_groups", await client.call_tool("list_groups"))
 
-        # TTS on one speaker — proves single-speaker tool path end-to-end.
+        # TTS on one speaker — proves single-target tool path end-to-end.
         pp(
             "say(Kitchen)",
             await client.call_tool(
                 "say",
-                {"target": "Kitchen", "text": "MCP server online. Kitchen check.", "volume": 40},
+                {"speakers": ["Kitchen"], "text": "MCP server online. Kitchen check.", "volume": 40},
             ),
         )
 
@@ -53,7 +53,7 @@ async def main() -> None:
             await client.call_tool(
                 "say",
                 {
-                    "target": "all",
+                    "speakers": ["all"],
                     "text": "All speakers reporting in via the new MCP server.",
                     "volume": 40,
                 },

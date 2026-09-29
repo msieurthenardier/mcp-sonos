@@ -1,6 +1,6 @@
 # Flight: Deterministic Target-Set Playback
 
-**Status**: ready
+**Status**: in-flight
 **Mission**: [Zero-Config Discovery & Deterministic Speaker Targeting](../../mission.md)
 
 ## Contributing to Criteria
@@ -480,12 +480,12 @@ is updated in the same flight (mission constraint).
 
 > **Note:** These are tentative suggestions, not commitments. Legs are planned and created one at a time as the flight progresses. This list will evolve based on discoveries during implementation.
 
-- [ ] `01-target-group-engine`: pure planner (`targeting.py`), controller
+- [x] `01-target-group-engine`: pure planner (`targeting.py`), controller
   executor with poll-confirmation and `GroupingError`, and `speakers` +
   `detach` on `play_url` / `play_file` / `play_stream` / `say` (including
   the `"all"` sentinel and resume on `c0`), with tests and the docs for those
   tools. *High-risk tier (shared-interface break, state changes).*
-- [ ] `02-playlist-targeting-and-contract`: `playlist_play` and
+- [x] `02-playlist-targeting-and-contract`: `playlist_play` and
   `playlist_from_page` target sets, the control-tool session-lookup
   fallback, the README system-prompt rewrite, CLAUDE.md, version 0.5.0, and
   the `targeting_smoke.py` apparatus. *High-risk tier (session keying).*

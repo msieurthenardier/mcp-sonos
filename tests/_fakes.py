@@ -82,6 +82,11 @@ class SoCoFake:
     seek_raise: "Exception | None" = field(default=None)
     # Last timestamp passed to seek — lets tests assert the seek position.
     seek_last: "str | None" = field(default=None)
+    # Opt-in link to a shared FakeHousehold (see below). When set, join()/
+    # unjoin()/stop() delegate to it for hardware-accurate multi-group
+    # semantics. When None (the default), the simplistic self-contained
+    # behavior below is unchanged — no existing test is affected.
+    household: "FakeHousehold | None" = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self.group = FakeGroup(coordinator=self, members=[self])
@@ -109,6 +114,8 @@ class SoCoFake:
     def stop(self) -> None:
         self.stop_call_count += 1
         self._transport = {"current_transport_state": "STOPPED"}
+        if self.household is not None:
+            self.household.do_stop(self.uid)
 
     def next(self) -> None:
         self.next_call_count += 1
@@ -138,10 +145,16 @@ class SoCoFake:
         pass
 
     def unjoin(self) -> None:
+        if self.household is not None:
+            self.household.do_unjoin(self.uid)
+            return
         # Fake doesn't model multi-group state — just refresh group-of-one.
         self.group = FakeGroup(coordinator=self, members=[self])
 
     def join(self, other: "SoCoFake") -> None:
+        if self.household is not None:
+            self.household.do_join(self.uid, other.uid)
+            return
         # Simplistic: this becomes a member of other's group.
         self.group = FakeGroup(coordinator=other, members=[other, self])
         other.group = FakeGroup(coordinator=other, members=[other, self])
@@ -203,3 +216,99 @@ class SoCoFake:
     def play_mode(self, value: str) -> None:
         self._play_mode = value
         self.call_log.append("play_mode")
+
+
+@dataclass
+class FakeHousehold:
+    """Shared group-membership model for a set of attached `SoCoFake`s.
+
+    Models the hardware-verified firmware semantics from Flight 2's design
+    decisions (see `mcp_sonos/targeting.py`'s module docstring):
+
+    - `join(other)` moves only the speaker it's called on.
+    - A coordinator's `unjoin()` delegates its remaining members to the
+      first remaining member (sorted by UID, for determinism) — they do
+      NOT each become standalone.
+    - A follower's `unjoin()` leaves just that one speaker standalone; its
+      former group is otherwise untouched.
+    - `join()` on a speaker that currently coordinates other members
+      **raises `AssertionError`** — this is what makes tests built on a
+      `FakeHousehold` enforce the executor invariant "never join() a
+      speaker that coordinates others."
+    - `stop()` marks that speaker's whole group as stopped (tracked so
+      tests can assert on it); joining/unjoining doesn't implicitly
+      change stopped-ness.
+
+    Opt-in: a `SoCoFake` only consults its household when `.household` is
+    set, via `attach()`. Unattached fakes are untouched by any of this —
+    they keep today's simplistic, self-contained `join`/`unjoin`, so no
+    existing test's behavior changes.
+
+    Every group is recomputed from scratch (`_sync_groups`) after each
+    mutation, so no attached fake's `.group` is ever left stale.
+    """
+
+    speakers: dict[str, "SoCoFake"] = field(default_factory=dict)
+    coordinator_of: dict[str, str] = field(default_factory=dict)
+    stopped_groups: set[str] = field(default_factory=set)
+
+    def attach(self, *speakers: "SoCoFake") -> "FakeHousehold":
+        for s in speakers:
+            s.household = self
+            self.speakers[s.uid] = s
+            self.coordinator_of.setdefault(s.uid, s.uid)
+        self._sync_groups()
+        return self
+
+    def group(self, coordinator: "SoCoFake", members: list["SoCoFake"]) -> "FakeHousehold":
+        """Test-setup helper: force `coordinator` + `members` into one group
+        directly, bypassing join/unjoin (for building initial topology)."""
+        for m in [coordinator, *members]:
+            self.coordinator_of[m.uid] = coordinator.uid
+        self._sync_groups()
+        return self
+
+    def members_of(self, coordinator_uid: str) -> list[str]:
+        return sorted(uid for uid, c in self.coordinator_of.items() if c == coordinator_uid)
+
+    def is_coordinator(self, uid: str) -> bool:
+        return self.coordinator_of.get(uid, uid) == uid
+
+    def do_join(self, uid: str, other_uid: str) -> None:
+        if self.is_coordinator(uid) and len(self.members_of(uid)) > 1:
+            raise AssertionError(
+                f"FakeHousehold: join() issued on {uid!r}, which still "
+                "coordinates other members. The executor must peel a "
+                "coordinator's followers off (or unjoin it) before ever "
+                "joining it elsewhere."
+            )
+        self.coordinator_of[uid] = other_uid
+        self._sync_groups()
+
+    def do_unjoin(self, uid: str) -> None:
+        if self.is_coordinator(uid):
+            remaining = [m for m in self.members_of(uid) if m != uid]
+            self.coordinator_of[uid] = uid
+            if remaining:
+                delegate = sorted(remaining)[0]
+                for m in remaining:
+                    self.coordinator_of[m] = delegate
+        else:
+            self.coordinator_of[uid] = uid
+        self._sync_groups()
+
+    def do_stop(self, coordinator_uid: str) -> None:
+        # Whichever group the stopped speaker currently coordinates (or, if
+        # it's a follower, its own group's coordinator) is marked stopped.
+        actual_coord = self.coordinator_of.get(coordinator_uid, coordinator_uid)
+        self.stopped_groups.add(actual_coord)
+
+    def _sync_groups(self) -> None:
+        by_coord: dict[str, list["SoCoFake"]] = {}
+        for uid, coord_uid in self.coordinator_of.items():
+            by_coord.setdefault(coord_uid, []).append(self.speakers[uid])
+        for coord_uid, members in by_coord.items():
+            coord = self.speakers[coord_uid]
+            grp = FakeGroup(coordinator=coord, members=sorted(members, key=lambda s: s.uid))
+            for m in members:
+                m.group = grp

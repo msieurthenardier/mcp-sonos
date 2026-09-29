@@ -129,7 +129,7 @@ async def phase_load(client: Client) -> None:
     # Start playback.
     result = await client.call_tool(
         "playlist_play",
-        {"speaker": SPEAKER, "name": PLAYLIST_NAME},
+        {"speakers": [SPEAKER], "name": PLAYLIST_NAME},
     )
     pp("playlist_play", result)
 

@@ -428,8 +428,7 @@ class PlaylistManager:
 
     def next_track(self, speaker_name: str) -> dict:
         speaker, coord = self._resolve_coordinator(speaker_name)
-        with self._lock:
-            sess = self._sessions.get(speaker.uid)
+        sess = self._session_for(speaker, coord)
         if sess is None:
             # No worker session — drive the live coordinator directly.
             # NOTE: SoCoSlaveException is swallowed here with no stale-coord
@@ -447,8 +446,7 @@ class PlaylistManager:
 
     def previous_track(self, speaker_name: str) -> dict:
         speaker, coord = self._resolve_coordinator(speaker_name)
-        with self._lock:
-            sess = self._sessions.get(speaker.uid)
+        sess = self._session_for(speaker, coord)
         if sess is None:
             # No worker session — drive the live coordinator directly.
             # NOTE: SoCoSlaveException is swallowed here with no stale-coord
@@ -466,8 +464,7 @@ class PlaylistManager:
 
     def stop(self, speaker_name: str) -> dict:
         speaker, coord = self._resolve_coordinator(speaker_name)
-        with self._lock:
-            sess = self._sessions.get(speaker.uid)
+        sess = self._session_for(speaker, coord)
         if not sess:
             # No worker session — stop the live coordinator; do NOT clear the queue.
             try:
@@ -488,8 +485,7 @@ class PlaylistManager:
 
     def status(self, speaker_name: str) -> dict:
         speaker, coord = self._resolve_coordinator(speaker_name)
-        with self._lock:
-            sess = self._sessions.get(speaker.uid)
+        sess = self._session_for(speaker, coord)
         if not sess:
             # No worker session — read live coordinator state.
             try:
@@ -646,6 +642,37 @@ class PlaylistManager:
                     self._sessions.pop(session.speaker_uid, None)
 
     # ---- internal ----------------------------------------------------------
+
+    def _session_for(self, speaker: SoCo, coord: SoCo) -> Optional[PlaybackSession]:
+        """Look up a worker session for `speaker`, falling back to the
+        session keyed on its CURRENT coordinator's UID.
+
+        Sessions are keyed by the originally-named speaker's UID (see the
+        module docstring's "Session keying" invariant). With a target set
+        (Flight 2), `playlist_play` forms the group and keys the session on
+        `c0`'s UID, but a control-tool call may name any member of that
+        group — not just `c0`. When there's no session for the named
+        speaker itself, try the session keyed on its current coordinator
+        (which is `c0` when the group formed by `playlist_play` is still
+        intact).
+
+        Used by all four session-lookup call sites (`next_track`,
+        `previous_track`, `stop`, `status`) so the fallback logic lives in
+        exactly one place.
+
+        **Accepted limitation** (see CLAUDE.md caveats): this only
+        recovers a session when the named speaker's *current* coordinator
+        is `c0`. If `c0` is later made a follower of a different
+        coordinator outside this MCP (the `group` tool, the Sonos app), a
+        control-tool call naming a member of that new group still misses
+        the session — the worker's own URI-mismatch takeover detection
+        usually ends such a session within one poll regardless.
+        """
+        with self._lock:
+            sess = self._sessions.get(speaker.uid)
+            if sess is None and coord.uid != speaker.uid:
+                sess = self._sessions.get(coord.uid)
+            return sess
 
     def has_active_session(self, speaker_uid: str) -> bool:
         """Return True if a worker-engine session exists for `speaker_uid`.

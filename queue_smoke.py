@@ -106,7 +106,7 @@ async def main() -> None:
         # ---- play via native queue engine -----------------------------------
         play_result = await client.call_tool(
             "playlist_play",
-            {"speaker": SPEAKER, "name": PLAYLIST_NAME},
+            {"speakers": [SPEAKER], "name": PLAYLIST_NAME},
         )
         play_data = play_result.data if hasattr(play_result, "data") else play_result
         pp("playlist_play", play_result)

@@ -39,14 +39,65 @@ SpeakerName = Annotated[
 ]
 
 
+SpeakerTargets = Annotated[
+    list[str],
+    Field(
+        min_length=1,
+        description=(
+            "One or more speaker display names (case-insensitive), in the "
+            "order you want them treated as targets. By default (see "
+            "`detach`) they are detached from any existing groups and "
+            "grouped only with each other, and any bystander left behind "
+            "(a speaker that was grouped with a target but isn't itself a "
+            "target) is stopped and separated so only the targets make "
+            "sound. Duplicates are removed. Groups containing no target are "
+            "never touched."
+        ),
+    ),
+]
+
+
+DetachFlag = Annotated[
+    bool,
+    Field(
+        description=(
+            "True (default): detach the targets from any existing groups "
+            "and play on exactly that set — bystanders left behind are "
+            "stopped. False: keep each target's existing group instead; if "
+            "the targets span more than one group, those groups are merged "
+            "together (pulling in their other, non-target members too) so "
+            "everything plays in sync. Nothing is stopped when False."
+        )
+    ),
+]
+
+
 PlaylistName = Annotated[
     str,
     Field(description="Unique name for the playlist, e.g. 'morning_mix'."),
 ]
 
 
+OptionalSpeakerTargets = Annotated[
+    list[str] | None,
+    Field(
+        min_length=1,
+        description=(
+            "Optional target set to start playback on immediately after "
+            "building the playlist — same contract as playlist_play's "
+            "`speakers` (see `detach`): by default the targets are "
+            "detached from any existing groups and grouped only with each "
+            "other, and any bystander is stopped. Omit (the default) to "
+            "only build the playlist; start it later with playlist_play. "
+            "An explicit empty list is rejected, like every other "
+            "target-set tool."
+        ),
+    ),
+]
+
+
 def register_tools(mcp: FastMCP, controller: SonosController) -> None:
-    """Register all 35 MCP tools as closures bound to the supplied controller.
+    """Register every MCP tool as a closure bound to the supplied controller.
 
     Called from `main()` after constructing the controller so module import
     has no side effects (no TCP bind, no SSDP discovery thread).
@@ -82,49 +133,59 @@ def register_tools(mcp: FastMCP, controller: SonosController) -> None:
 
     @mcp.tool
     def play_url(
-        speaker: SpeakerName,
+        speakers: SpeakerTargets,
         url: Annotated[
             str,
             AfterValidator(validate_http_url),
-            Field(description="HTTP(S) URL the speaker should play. Must be reachable from the Sonos LAN."),
+            Field(description="HTTP(S) URL the target group should play. Must be reachable from the Sonos LAN."),
         ],
         title: Annotated[str | None, Field(description="Optional title shown on the Sonos display.")] = None,
+        detach: DetachFlag = True,
     ) -> dict:
-        """Play an arbitrary HTTP URL on the speaker's group coordinator.
+        """Play an arbitrary HTTP URL on a target set of speakers, grouped together.
 
         For a finite clip (an .mp3 file). BLOCKS until the clip finishes. Do
         NOT use this for a never-ending radio stream — it will hang. Use
-        `play_stream` for live radio.
+        `play_stream` for live radio. See `speakers` / `detach` for the
+        target-set contract shared by every audio-sending tool.
         """
-        return controller.play_url(speaker, url, title=title)
+        return controller.play_url(speakers, url, title=title, detach=detach)
 
     @mcp.tool
     def play_stream(
-        speaker: SpeakerName,
+        speakers: SpeakerTargets,
         url: Annotated[
             str,
             AfterValidator(validate_http_url),
             Field(description="HTTP(S) URL of a live radio stream (e.g. an Icecast .mp3 stream)."),
         ],
         title: Annotated[str | None, Field(description="Optional station name shown on the Sonos display.")] = None,
+        detach: DetachFlag = True,
     ) -> dict:
-        """Play a live, never-ending radio stream — returns immediately.
+        """Play a live, never-ending radio stream on a target set — returns immediately.
 
         Use this (not `play_url`) for radio streams. Handles the speaker-model
         differences in how live streams must be started, and confirms the
         stream actually began playing before returning. The result includes
-        `state` (should be 'PLAYING') and which `scheme` worked.
+        `state` (should be 'PLAYING') and which `scheme` worked. See
+        `speakers` / `detach` for the target-set contract shared by every
+        audio-sending tool.
         """
-        return controller.play_stream(speaker, url, title=title)
+        return controller.play_stream(speakers, url, title=title, detach=detach)
 
     @mcp.tool
     def play_file(
-        speaker: SpeakerName,
+        speakers: SpeakerTargets,
         path: Annotated[str, Field(description="Absolute path to an audio file on the MCP host. It will be staged and served over HTTP.")],
         title: Annotated[str | None, Field(description="Optional title shown on the Sonos display.")] = None,
+        detach: DetachFlag = True,
     ) -> dict:
-        """Play a local audio file by staging it onto the MCP host's audio server."""
-        return controller.play_file(speaker, path, title=title)
+        """Play a local audio file on a target set, staging it onto the MCP host's audio server.
+
+        See `speakers` / `detach` for the target-set contract shared by
+        every audio-sending tool.
+        """
+        return controller.play_file(speakers, path, title=title, detach=detach)
 
     @mcp.tool
     def pause(speaker: SpeakerName) -> dict:
@@ -213,17 +274,32 @@ def register_tools(mcp: FastMCP, controller: SonosController) -> None:
 
     @mcp.tool
     def say(
-        target: Annotated[str, Field(description="Speaker name, or the literal 'all' to broadcast in sync across every speaker.")],
+        speakers: Annotated[
+            list[str],
+            Field(
+                min_length=1,
+                description=(
+                    "One or more speaker display names (case-insensitive), or "
+                    "the single-item list ['all'] to broadcast in sync across "
+                    "every speaker (dissolves all groups, plays, then "
+                    "dissolves again — `detach` is ignored for ['all']). "
+                    "'all' cannot be combined with other names. For a normal "
+                    "target set, see `detach` for the grouping contract "
+                    "shared by every audio-sending tool."
+                ),
+            ),
+        ],
         text: Annotated[str, Field(description="What to say. Plain text; synthesized via Piper neural TTS.")],
-        volume: Annotated[int | None, Field(ge=0, le=100, description="Optional volume for the announcement (per affected speaker).")] = None,
+        volume: Annotated[int | None, Field(ge=0, le=100, description="Optional volume for the announcement (applied to every speaker that ends up playing).")] = None,
         lang: Annotated[str, Field(description="Deprecated. Ignored. Voice selection is set process-wide via the PIPER_VOICE env var.")] = "en",
+        detach: DetachFlag = True,
     ) -> dict:
-        """Speak text on one speaker, the whole group, or 'all' speakers in sync.
+        """Speak text on a target set of speakers, or on ['all'] for a synced whole-house broadcast.
 
         Blocks until playback finishes. Returned dict includes which
         speakers were actually affected.
         """
-        return controller.say(target, text, volume=volume, lang=lang)
+        return controller.say(speakers, text, volume=volume, lang=lang, detach=detach)
 
     # ---- playlists ----------------------------------------------------------
     #
@@ -329,17 +405,8 @@ def register_tools(mcp: FastMCP, controller: SonosController) -> None:
                 )
             ),
         ] = False,
-        speaker: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "If set to a speaker name, START playing the playlist on "
-                    "that speaker immediately after building it. This is the "
-                    "one-call way to play a blog's music: you do NOT need a "
-                    "separate playlist_play call. Omit to only build the list."
-                )
-            ),
-        ] = None,
+        speakers: OptionalSpeakerTargets = None,
+        detach: DetachFlag = True,
     ) -> dict:
         """Build a playlist from .mp3 links found on a web page (and optionally play it).
 
@@ -347,12 +414,15 @@ def register_tools(mcp: FastMCP, controller: SonosController) -> None:
         have the page URL, not the individual track URLs. Creates the playlist
         (or replaces it if the name exists). By default takes the first `limit`
         tracks; use `offset` to page deeper or `shuffle=true` for a random
-        selection. **Pass `speaker` to build AND start playback in this single
-        call** — then you are done, no separate playlist_play needed. Raises an
-        error if the page has no direct audio links.
+        selection. **Pass `speakers` to build AND start playback in this single
+        call** — then you are done, no separate playlist_play needed. See
+        `speakers` / `detach` for the target-set contract shared by every
+        audio-sending tool. Raises an error if the page has no direct audio
+        links.
         """
         return controller.playlist_from_page(
-            name, page_url, limit, offset=offset, shuffle=shuffle, speaker=speaker
+            name, page_url, limit, offset=offset, shuffle=shuffle,
+            speakers=speakers, detach=detach,
         )
 
     @mcp.tool
@@ -375,38 +445,61 @@ def register_tools(mcp: FastMCP, controller: SonosController) -> None:
 
     @mcp.tool
     def playlist_play(
-        speaker: SpeakerName,
+        speakers: SpeakerTargets,
         name: PlaylistName,
         shuffle: Annotated[bool, Field(description="Randomize order. Starts with the item at `start_index`, then shuffles the rest.")] = False,
         start_index: Annotated[int, Field(ge=0, description="0-based index of the first item to play.")] = 0,
+        detach: DetachFlag = True,
     ) -> dict:
-        """Start continuous background playback of a playlist.
+        """Start continuous background playback of a playlist on a target set.
 
-        Returns immediately with session info. The server plays items
-        back-to-back on the speaker's group coordinator until the playlist
-        ends or playback is preempted (by another `say`, `play_url`, or
-        `stop`). External interruptions cleanly end the session.
+        Forms the target group first — see `speakers` / `detach` for the
+        contract shared by every audio-sending tool — then plays items
+        back-to-back on the resulting `coordinator` until the playlist ends
+        or playback is preempted (by another `say`, `play_url`, or `stop`).
+        External interruptions cleanly end the session. Returns immediately
+        with session info; control tools (`playlist_next`, `previous`,
+        `stop`, `status`) accept any member of the resulting group, not
+        just `coordinator`.
         """
-        return controller.playlists.play(speaker, name, shuffle=shuffle, start_index=start_index)
+        return controller.playlist_play(
+            speakers, name, shuffle=shuffle, start_index=start_index, detach=detach
+        )
 
     @mcp.tool
     def playlist_next(speaker: SpeakerName) -> dict:
-        """Skip to the next item in the currently-playing playlist on this speaker."""
+        """Skip to the next item in the currently-playing playlist.
+
+        `speaker` can be any member of the group `playlist_play` formed,
+        not just its `coordinator` — the session is found either way.
+        """
         return controller.playlists.next_track(speaker)
 
     @mcp.tool
     def playlist_previous(speaker: SpeakerName) -> dict:
-        """Go back to the previous item in the currently-playing playlist."""
+        """Go back to the previous item in the currently-playing playlist.
+
+        `speaker` can be any member of the group `playlist_play` formed,
+        not just its `coordinator` — the session is found either way.
+        """
         return controller.playlists.previous_track(speaker)
 
     @mcp.tool
     def playlist_stop(speaker: SpeakerName) -> dict:
-        """Stop the playlist currently playing on this speaker and halt playback."""
+        """Stop the currently-playing playlist and halt playback.
+
+        `speaker` can be any member of the group `playlist_play` formed,
+        not just its `coordinator` — the session is found either way.
+        """
         return controller.playlists.stop(speaker)
 
     @mcp.tool
     def playlist_status(speaker: SpeakerName) -> dict:
-        """Return the status of the playlist currently playing on this speaker."""
+        """Return the status of the currently-playing playlist.
+
+        `speaker` can be any member of the group `playlist_play` formed,
+        not just its `coordinator` — the session is found either way.
+        """
         return controller.playlists.status(speaker)
 
 
