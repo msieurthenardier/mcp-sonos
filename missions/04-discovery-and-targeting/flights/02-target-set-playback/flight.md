@@ -1,17 +1,17 @@
 # Flight: Deterministic Target-Set Playback
 
-**Status**: in-flight
+**Status**: landed
 **Mission**: [Zero-Config Discovery & Deterministic Speaker Targeting](../../mission.md)
 
 ## Contributing to Criteria
-- [ ] Every audio-sending tool (clip/file playback, stream playback, playlist playback, announcements) accepts a set of one or more target speakers
-- [ ] By default, audio plays on exactly the requested target set: targets are detached from any existing groups and grouped only with each other *(behavior test `target-set-playback`)*
-- [ ] By default, speakers that were grouped with a target but aren't targets end up stopped and separated from the targets, so only the targets make sound *(behavior test `target-set-playback`)*
-- [ ] Speakers in groups that contained no target are untouched *(behavior test `target-set-playback`)*
-- [ ] A caller can opt out of detaching and get today's behavior: each target's existing group plays as-is *(behavior test `target-set-playback`)*
-- [ ] The all-speakers announcement keeps its existing broadcast behavior *(behavior test `target-set-playback`)*
-- [ ] Tool schemas, README (agent system prompt), and CLAUDE.md describe the targeting behavior accurately *(targeting half of the docs criterion)*
-- [ ] The unit suite covers target-set grouping without hardware, and passes *(targeting half)*
+- [x] Every audio-sending tool (clip/file playback, stream playback, playlist playback, announcements) accepts a set of one or more target speakers
+- [x] By default, audio plays on exactly the requested target set: targets are detached from any existing groups and grouped only with each other *(behavior test `target-set-playback`)*
+- [x] By default, speakers that were grouped with a target but aren't targets end up stopped and separated from the targets, so only the targets make sound *(behavior test `target-set-playback`)*
+- [x] Speakers in groups that contained no target are untouched *(behavior test `target-set-playback`)*
+- [x] A caller can opt out of detaching and get today's behavior: each target's existing group plays as-is *(behavior test `target-set-playback`)*
+- [x] The all-speakers announcement keeps its existing broadcast behavior *(behavior test `target-set-playback`)*
+- [x] Tool schemas, README (agent system prompt), and CLAUDE.md describe the targeting behavior accurately *(targeting half of the docs criterion)*
+- [x] The unit suite covers target-set grouping without hardware, and passes *(targeting half)*
 
 ---
 
@@ -455,9 +455,9 @@ is updated in the same flight (mission constraint).
    `target-set-playback`.
 
 ### Checkpoints
-- [ ] Planner + executor + clip/stream/say tools landed; unit suite green
-- [ ] Playlists + response shape + docs + version 0.5.0 landed
-- [ ] Behavior test `target-set-playback` passes on hardware, muted
+- [x] Planner + executor + clip/stream/say tools landed; unit suite green
+- [x] Playlists + response shape + docs + version 0.5.0 landed
+- [x] Behavior test `target-set-playback` passes on hardware, muted
 
 ### Adaptation Criteria
 
@@ -495,7 +495,7 @@ is updated in the same flight (mission constraint).
   This leg makes the last read come from `c0`'s own view and adds a
   resync-and-retry. It also hardens the apparatus and repairs spec step 7.
   *High-risk tier.*
-- [ ] `03-hardware-targeting-verification`: behavior test
+- [x] `03-hardware-targeting-verification`: behavior test
   `target-set-playback`, muted, on the operator's household.
 
 ---
@@ -503,10 +503,10 @@ is updated in the same flight (mission constraint).
 ## Post-Flight
 
 ### Completion Checklist
-- [ ] All legs completed
+- [x] All legs completed
 - [ ] Code merged
-- [ ] Tests passing
-- [ ] Documentation updated
+- [x] Tests passing
+- [x] Documentation updated
 
 ### Verification
 - `.venv/bin/python -m pytest -q` passes, including `tests/test_targeting.py`

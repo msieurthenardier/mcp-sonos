@@ -1,6 +1,6 @@
 # Leg: hardware-targeting-verification
 
-**Status**: in-flight
+**Status**: completed
 **Flight**: [Deterministic Target-Set Playback](../flight.md)
 
 ## Objective

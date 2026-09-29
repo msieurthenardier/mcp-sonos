@@ -1,9 +1,9 @@
 # Behavior Test: Target-Set Playback
 
 **Slug**: `target-set-playback`
-**Status**: draft
+**Status**: active
 **Created**: 2026-09-29
-**Last Run**: never
+**Last Run**: 2026-09-29-05-02-18
 
 ## Revision History
 - **2026-09-29 (leg 4, coordinator-view hardening)**: repaired step 7's

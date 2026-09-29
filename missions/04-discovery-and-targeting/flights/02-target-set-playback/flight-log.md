@@ -700,3 +700,22 @@ No hangs; no hardware contact of any kind (no smoke script or
   accepted as-is: the `last_polled_uid` wording in `FakeHousehold`.
 - Leg 04 marked `completed` and committed as a new commit, with no amend.
   Next, leg 03 re-runs `target-set-playback`.
+
+### 2026-09-29: Leg 03 re-run passed 12/12. Flight landed [COMPLETE:flight]
+- Run log: `tests/behavior/target-set-playback/runs/2026-09-29-05-02-18.md`,
+  run on `eac7d36`.
+- **Step 6, which failed before, passes.** The coordinator-view fix works on
+  hardware. The repaired step 7 passes, exercising the delegate path. The
+  hardened `stop-all` reported `errors:[]` on every call.
+- **Step 12** first failed on an apparatus report-read timing artifact:
+  Patio's own view lagged the rejoin. The Validator concurred. The Flight
+  Director chose a **rerun-checkpoint**, since the restore is idempotent,
+  and the rerun passed with all five speakers matched and exit 0. Logged
+  **squawk 0007** for the `restore-state` settle-poll.
+- **Deviation**: the Validator judged step N from its evidence files while
+  the Executor ran step N+1, which is pipelined and recorded in the run log.
+- The household was verified restored to its pre-test state. It stayed
+  muted and silent throughout the run.
+- All four legs are `completed`, and the contributing criteria and
+  checkpoints are checked. Flight status is `landed`, and it is checked off
+  in `mission.md`. The behavior-test spec is `active`.
