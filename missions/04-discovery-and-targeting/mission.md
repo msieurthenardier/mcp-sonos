@@ -1,6 +1,6 @@
 # Mission: Zero-Config Discovery & Deterministic Speaker Targeting
 
-**Status**: planning
+**Status**: active
 
 ## Outcome
 An agent can drive the whole Sonos household without anyone configuring
