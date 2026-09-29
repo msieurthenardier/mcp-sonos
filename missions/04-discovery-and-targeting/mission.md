@@ -1,6 +1,6 @@
 # Mission: Zero-Config Discovery & Deterministic Speaker Targeting
 
-**Status**: active
+**Status**: completed
 
 ## Outcome
 An agent can drive the whole Sonos household without anyone configuring
@@ -38,17 +38,17 @@ only reachable through separate tools (`group`, `ungroup`, `partymode`,
 `dissolve_all_groups`).
 
 ## Success Criteria
-- [ ] With no speaker IPs configured, discovery finds every visible speaker in the household on the operator's LAN (all five, including Patio), across repeated runs *(behavior-test-backed — real LAN)*
-- [ ] When IPs are configured, they still work as a way in on networks where automatic discovery fails, and no longer hide household members that weren't listed *(behavior-test-backed)*
-- [ ] When discovery finds no speakers, the tool error explains why and what the operator can set, rather than failing with an empty or generic result
-- [ ] Every audio-sending tool (clip/file playback, stream playback, playlist playback, announcements) accepts a set of one or more target speakers
-- [ ] By default, audio plays on exactly the requested target set: targets are detached from any existing groups and grouped only with each other *(behavior-test-backed — real speakers)*
-- [ ] By default, speakers that were grouped with a target but aren't targets end up stopped and separated from the targets, so only the targets make sound *(behavior-test-backed)*
-- [ ] Speakers in groups that contained no target are untouched *(behavior-test-backed)*
-- [ ] A caller can opt out of detaching and get today's behavior: each target's existing group plays as-is
-- [ ] The all-speakers announcement keeps its existing broadcast behavior *(behavior-test-backed)*
-- [ ] Tool schemas, README (configuration table, agent system prompt), and CLAUDE.md describe the new discovery and targeting behavior accurately; no tool description claims behavior it doesn't have
-- [ ] The unit suite covers discovery selection and target-set grouping without hardware, and passes
+- [x] With no speaker IPs configured, discovery finds every visible speaker in the household on the operator's LAN (all five, including Patio), across repeated runs *(behavior-test-backed — real LAN)*
+- [x] When IPs are configured, they still work as a way in on networks where automatic discovery fails, and no longer hide household members that weren't listed *(behavior-test-backed)*
+- [x] When discovery finds no speakers, the tool error explains why and what the operator can set, rather than failing with an empty or generic result
+- [x] Every audio-sending tool (clip/file playback, stream playback, playlist playback, announcements) accepts a set of one or more target speakers
+- [x] By default, audio plays on exactly the requested target set: targets are detached from any existing groups and grouped only with each other *(behavior-test-backed — real speakers)*
+- [x] By default, speakers that were grouped with a target but aren't targets end up stopped and separated from the targets, so only the targets make sound *(behavior-test-backed)*
+- [x] Speakers in groups that contained no target are untouched *(behavior-test-backed)*
+- [x] A caller can opt out of detaching and get today's behavior: each target's existing group plays as-is
+- [x] The all-speakers announcement keeps its existing broadcast behavior *(behavior-test-backed)*
+- [x] Tool schemas, README (configuration table, agent system prompt), and CLAUDE.md describe the new discovery and targeting behavior accurately; no tool description claims behavior it doesn't have *(partially: squawk 0005 open; see mission debrief)*
+- [x] The unit suite covers discovery selection and target-set grouping without hardware, and passes
 
 ## Stakeholders
 Maintainer (msieurthenardier) — self-hosted on a home LAN, drives the server

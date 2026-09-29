@@ -719,3 +719,14 @@ No hangs; no hardware contact of any kind (no smoke script or
 - All four legs are `completed`, and the contributing criteria and
   checkpoints are checked. Flight status is `landed`, and it is checked off
   in `mission.md`. The behavior-test spec is `active`.
+
+### 2026-09-29: Debrief
+- Flight debrief written from the Developer and Architect debrief
+  interviews. The human interview was skipped under the autonomous
+  authorization.
+- **No new squawks.** 0006 and 0007 were already logged. The two biggest
+  follow-ups, view-lag hardening for the control tools and unifying the
+  retry strategies, need design work, so they are carried as debrief
+  recommendations for a future flight.
+- Flight status is `completed`, set by the Flight Director under the
+  autonomous authorization. PR #12 is ready and stacked on #11.
