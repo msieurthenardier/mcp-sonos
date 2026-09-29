@@ -4,11 +4,11 @@
 **Mission**: [Zero-Config Discovery & Deterministic Speaker Targeting](../../mission.md)
 
 ## Contributing to Criteria
-- [ ] With no speaker IPs configured, discovery finds every visible speaker in the household on the operator's LAN (all five, including Patio), across repeated runs *(behavior test `zero-config-discovery`)*
-- [ ] When IPs are configured, they still work as a way in on networks where automatic discovery fails, and no longer hide household members that weren't listed *(behavior test `zero-config-discovery`)*
-- [ ] When discovery finds no speakers, the tool error explains why and what the operator can set, rather than failing with an empty or generic result
-- [ ] Tool schemas, README, and CLAUDE.md describe the new discovery behavior accurately *(discovery half of the mission docs criterion; targeting half is Flight 2)*
-- [ ] The unit suite covers discovery selection without hardware, and passes *(discovery half; target-set grouping is Flight 2)*
+- [x] With no speaker IPs configured, discovery finds every visible speaker in the household on the operator's LAN (all five, including Patio), across repeated runs *(behavior test `zero-config-discovery`)*
+- [x] When IPs are configured, they still work as a way in on networks where automatic discovery fails, and no longer hide household members that weren't listed *(behavior test `zero-config-discovery`)*
+- [x] When discovery finds no speakers, the tool error explains why and what the operator can set, rather than failing with an empty or generic result
+- [x] Tool schemas, README, and CLAUDE.md describe the new discovery behavior accurately *(discovery half of the mission docs criterion; targeting half is Flight 2)*
+- [x] The unit suite covers discovery selection without hardware, and passes *(discovery half; target-set grouping is Flight 2)*
 
 ---
 
