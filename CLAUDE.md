@@ -27,12 +27,15 @@ uvx --from git+https://github.com/msieurthenardier/mcp-sonos mcp-sonos
 
 # Smoke tests against real hardware (in-process FastMCP Client; same
 # code path the agent uses, no stdio in the middle). Need a reachable
-# Sonos household on the LAN.
-SONOS_IPS=192.168.1.51,... .venv/bin/python smoke_test.py            # basic tools: say, list, etc.
-SONOS_IPS=192.168.1.51,... .venv/bin/python playlist_smoke.py        # playlists: natural end, skip, stop
-SONOS_IPS=192.168.1.51,... .venv/bin/python queue_smoke.py           # native-queue engine: play, next, stop
-SONOS_IPS=192.168.1.51,... .venv/bin/python reap_smoke.py --load     # reap-survival phase 1: loads queue + exits (= the reap)
-SONOS_IPS=192.168.1.51,... .venv/bin/python reap_smoke.py --control  # reap-survival phase 2: fresh process drives the live queue
+# Sonos household on the LAN. Discovery is zero-config (seeds -> bounded
+# scan -> SSDP), so no env var is required; set SONOS_IPS=ip1,ip2,... first
+# if this host's default scan/SSDP can't reach the household.
+.venv/bin/python smoke_test.py            # basic tools: say, list, etc.
+.venv/bin/python playlist_smoke.py        # playlists: natural end, skip, stop
+.venv/bin/python queue_smoke.py           # native-queue engine: play, next, stop
+.venv/bin/python reap_smoke.py --load     # reap-survival phase 1: loads queue + exits (= the reap)
+.venv/bin/python reap_smoke.py --control  # reap-survival phase 2: fresh process drives the live queue
+.venv/bin/python discovery_smoke.py --runs 1  # discovery pipeline: list_speakers xN + refresh_speakers
 
 # Build wheel (sanity check on packaging changes)
 .venv/bin/pip install build
@@ -187,12 +190,27 @@ re-synthesize.
 ## Operating constraints (these will bite you)
 
 - **MCP host must be on the same LAN as the speakers.** Multicast SSDP
-  doesn't traverse routers, Sonos can't reach hosts outside its
-  broadcast domain, and the audio HTTP server needs to be reachable
-  from each speaker.
-- **SSDP discovery is unreliable under load** (especially during
-  group churn). Prefer `SONOS_IPS=ip1,ip2,...` for deterministic
-  startup; SSDP is the convenience path, not the contract.
+  and the bounded subnet scan don't traverse routers, Sonos can't reach
+  hosts outside its broadcast domain, and the audio HTTP server needs to
+  be reachable from each speaker.
+- **Discovery is zero-config: configured seeds (optional) -> learned seeds
+  -> bounded scan -> SSDP, each stage running only if the previous found
+  nothing** (`speakers.py`, Flight 1). `SONOS_IPS` seeds are a way *in*,
+  not an exhaustive allow-list — the first live seed's `visible_zones`
+  expands to the whole household, so unlisted speakers are still found.
+  **Learned seeds** are the IPs from the last successful discovery in this
+  process, tried automatically before ever scanning again — this is why
+  steady-state discovery normally never scans. The bounded scan
+  (`SONOS_SCAN_NETWORKS` overrides it) only runs cold or when every known
+  IP has gone quiet, and is deliberately rate-limited
+  (`SCAN_MAX_THREADS`): a full-speed scan was found to disrupt in-flight
+  connections to the real speakers for a few seconds afterward on some
+  hosts (observed under WSL2 mirrored networking), so it isn't an env var
+  — it's a fixed safety margin, not something to tune per deployment.
+  SSDP is the last resort, kept for hosts whose speakers sit outside the
+  scanned network. When every stage comes up empty, discovery raises
+  `NoSpeakersFound` (a `RuntimeError`) naming what was tried (including
+  any learned seeds) and what env var to set — never an empty list.
 - **WSL2 needs both mirrored networking AND a Windows Firewall
   inbound rule** (TCP 8000-8999 from your LAN CIDR). See README's
   "WSL2 specifics" section for the exact PowerShell. Without the
@@ -225,6 +243,17 @@ re-synthesize.
   parameter descriptions.
 - Anything that touches groups must use `_coordinator_of` and
   `_group_members_of`. Don't bypass them.
+- **Any new forced-refresh path must route through `SonosController._invalidate_speakers()`,
+  not just reset `_speakers_ts`.** SoCo caches each household's
+  `ZoneGroupState` for 5s process-wide (`POLLING_CACHE_TIMEOUT`,
+  `soco/zonegroupstate.py`), underneath our own 30s TTL. Zeroing only
+  `_speakers_ts` can still return stale topology if the re-discovery lands
+  within that 5s window. `_invalidate_speakers()` clears both layers;
+  every existing forced path (`refresh()`, the `_resolve()` name-miss
+  retry, `reboot()`, the `PlaylistManager` invalidation callback, `say`'s
+  inline stale-coordinator retry) already goes through it. Plain 30s TTL
+  expiry deliberately does NOT call it — that path is already past the 5s
+  window, so clearing would be wasted work.
 - New env vars → document in README's Configuration table AND
   `.env.example`.
 - POC scripts in `poc/` are historical; they use Piper via a thin

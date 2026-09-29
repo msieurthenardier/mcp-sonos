@@ -5,6 +5,8 @@
 **Created**: 2026-09-28
 **Last Run**: never
 
+> Revised 2026-09-28 (in flight): the timing expectations were split into a cold first call and later calls, after leg 02 added learned seeds and a rate-limited scan. See the Flight 01 log.
+
 ## Intent
 This test verifies that the MCP server finds every visible speaker in the
 operator's real Sonos household. It checks four situations:
@@ -41,7 +43,9 @@ whether the bounded scan, the seed expansion, and invisible-device filtering
 | # | Actions | Expected Results |
 |---|---------|------------------|
 | 1 | Precondition probe: ping `192.168.86.53` once. Try a TCP connection to port 1400 on `192.168.86.200` and `192.168.86.201` with a 1 s timeout. | `.53` answers. Neither `.200` nor `.201` accepts a connection on port 1400. |
-| 2 | With neither `SONOS_IPS` nor `SONOS_SCAN_NETWORKS` set, run `.venv/bin/python discovery_smoke.py --runs 3`. | Exit code 0. Every call (3 × `list_speakers` + `refresh_speakers`) lists exactly these five names: Dining Room, Fireplace Room, Kitchen, Lounge, Patio. Each name has the IP from the preconditions. `Boost` never appears. Each call reports `elapsed_s` under 3 s. |
+| 2 | With neither `SONOS_IPS` nor `SONOS_SCAN_NETWORKS` set, run `.venv/bin/python discovery_smoke.py --runs 3`. | Exit code 0. Every call (3 × `list_speakers` + `refresh_speakers`) lists exactly these five names: Dining Room, Fireplace Room, Kitchen, Lounge, Patio. Each name has the IP from the preconditions. `Boost` never appears. The first `list_speakers` call (the cold start, which may scan) reports
+`elapsed_s` under 5 s. Every later call, including `refresh_speakers`,
+reports under 1.5 s, because learned seeds serve it without a scan. |
 | 3 | Repeat step 2 twice more, as two more fresh processes. | Both runs meet all of step 2's results. Together with step 2, that is 3 fresh processes with every call listing all five speakers. |
 | 4 | Set `SONOS_IPS=192.168.86.53` (Kitchen only) and run `discovery_smoke.py --runs 1`. | Exit code 0. Every call lists all five speakers, not just Kitchen, including Patio at `.49`. `Boost` does not appear. |
 | 5 | Set `SONOS_IPS=192.168.86.200,192.168.86.49` (a dead seed first, then Patio) and run `discovery_smoke.py --runs 1`. | Exit code 0. Every call lists all five speakers. The first call's `elapsed_s` is under 3 s, meaning the dead seed didn't stall discovery for the ~4 s a bare UPnP attempt costs. |

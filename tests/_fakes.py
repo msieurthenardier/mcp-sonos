@@ -22,10 +22,30 @@ class FakeGroup:
 
 
 @dataclass
+class FakeZoneGroupState:
+    """Stand-in for SoCo's per-household `ZoneGroupState`.
+
+    Real SoCo shares one `ZoneGroupState` instance across every speaker in
+    a household (`soco/core.py:SoCo.zone_group_state`); this fake mirrors
+    that by having `SoCoFake` instances constructed with the same
+    `household_id` share one `FakeZoneGroupState` via `_builders.py` /
+    test setup, when a test cares about that. `clear_cache()` just counts
+    calls so tests can assert which forced-refresh paths cleared it.
+    """
+
+    clear_cache_count: int = 0
+
+    def clear_cache(self) -> None:
+        self.clear_cache_count += 1
+
+
+@dataclass
 class SoCoFake:
     player_name: str = "Kitchen"
     uid: str = "RINCON_FAKE000000000"
     ip_address: str = "192.168.1.50"
+    household_id: str = "Sonos_FAKE_HOUSEHOLD"
+    zone_group_state: FakeZoneGroupState = field(default_factory=FakeZoneGroupState)
     _transport: dict = field(default_factory=lambda: {"current_transport_state": "STOPPED"})
     _track: dict = field(
         default_factory=lambda: {

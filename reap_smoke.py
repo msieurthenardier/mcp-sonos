@@ -37,11 +37,9 @@ import logging
 import os
 import sys
 
-# SSDP discovery can race when not all speakers are in the discovery window.
-# Set deterministic IPs by default; users with different LANs can override
-# by setting SONOS_IPS in the shell before running the script.
-# See CLAUDE.md "Operating constraints" for the SONOS_IPS convention.
-os.environ.setdefault("SONOS_IPS", "192.168.1.51,192.168.1.52,192.168.1.53,192.168.1.54,192.168.1.55")
+# Zero-config discovery (seeds -> bounded scan -> SSDP) runs with no env vars
+# set. Set SONOS_IPS in the shell first if this host's default scan can't
+# reach the household (see CLAUDE.md "Operating constraints").
 
 logging.basicConfig(
     level=logging.INFO,
@@ -90,13 +88,19 @@ async def phase_load(client: Client) -> None:
     """Create an all-external playlist, start it, then EXIT (= the reap)."""
     print(f"[--load] Checking speakers are reachable on {SPEAKER!r}...")
 
-    # Quick reachability check: list_speakers.  Fail fast if nothing found.
-    speakers = await client.call_tool("list_speakers", {})
-    speaker_data = speakers.data if hasattr(speakers, "data") else speakers
-    if not speaker_data:
+    # Quick reachability check: list_speakers. Fail fast (via _fail, not a
+    # crash) if discovery's seeds/scan/SSDP pipeline came up empty —
+    # list_speakers raises a ToolError with the pipeline's own diagnostics
+    # in that case, so this must not let the exception propagate uncaught.
+    try:
+        speakers = await client.call_tool("list_speakers", {})
+        speaker_data = speakers.data if hasattr(speakers, "data") else speakers
+    except Exception as e:
         _fail(
-            "No speakers found. Is SONOS_IPS set correctly? "
-            "Is the Sonos household on the same LAN?"
+            f"Could not reach Sonos hardware: {e}\n"
+            "list_speakers already tried seeds, a bounded subnet scan, and "
+            "SSDP — see its message above for what to set (SONOS_IPS, "
+            "SONOS_SCAN_NETWORKS, or HOST_IP)."
         )
     print(f"  Found {len(speaker_data)} speaker(s).")
 
@@ -149,13 +153,18 @@ async def phase_control(client: Client) -> None:
     """In a fresh process, drive the live queue and then clean up."""
     print(f"[--control] Checking speakers are reachable on {SPEAKER!r}...")
 
-    # Quick reachability check.
-    speakers = await client.call_tool("list_speakers", {})
-    speaker_data = speakers.data if hasattr(speakers, "data") else speakers
-    if not speaker_data:
+    # Quick reachability check. Same rationale as phase_load: list_speakers
+    # raises (ToolError) rather than returning empty when discovery finds
+    # nothing, so this must catch it and route to _fail instead of crashing.
+    try:
+        speakers = await client.call_tool("list_speakers", {})
+        speaker_data = speakers.data if hasattr(speakers, "data") else speakers
+    except Exception as e:
         _fail(
-            "No speakers found. Is SONOS_IPS set correctly? "
-            "Is the Sonos household on the same LAN?"
+            f"Could not reach Sonos hardware: {e}\n"
+            "list_speakers already tried seeds, a bounded subnet scan, and "
+            "SSDP — see its message above for what to set (SONOS_IPS, "
+            "SONOS_SCAN_NETWORKS, or HOST_IP)."
         )
     print(f"  Found {len(speaker_data)} speaker(s).")
 

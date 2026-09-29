@@ -31,14 +31,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import sys
 
-# SSDP discovery can race when not all speakers are in the discovery window.
-# Set deterministic IPs by default; users with different LANs can override
-# by setting SONOS_IPS in the shell before running the script.
-# See CLAUDE.md "Operating constraints" for the SONOS_IPS convention.
-os.environ.setdefault("SONOS_IPS", "192.168.1.51,192.168.1.52,192.168.1.53,192.168.1.54,192.168.1.55")
+# Zero-config discovery (seeds -> bounded scan -> SSDP) runs with no env vars
+# set. Set SONOS_IPS in the shell first if this host's default scan can't
+# reach the household (see CLAUDE.md "Operating constraints").
 
 logging.basicConfig(
     level=logging.INFO,
@@ -77,16 +74,12 @@ async def main() -> None:
         print("Checking hardware reachability …")
         try:
             speakers_result = await client.call_tool("list_speakers")
-            speakers_data = speakers_result.data if hasattr(speakers_result, "data") else speakers_result
-            if not speakers_data:
-                fail(
-                    "No Sonos speakers found. Set SONOS_IPS to the correct IPs "
-                    "for your household and retry."
-                )
         except Exception as e:
             fail(
                 f"Could not reach Sonos hardware: {e}\n"
-                "Set SONOS_IPS to the correct IPs for your household and retry."
+                "list_speakers already tried seeds, a bounded subnet scan, and "
+                "SSDP — see its message above for what to set (SONOS_IPS, "
+                "SONOS_SCAN_NETWORKS, or HOST_IP)."
             )
         pp("list_speakers", speakers_result)
 

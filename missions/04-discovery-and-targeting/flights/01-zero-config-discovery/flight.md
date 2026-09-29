@@ -1,6 +1,6 @@
 # Flight: Zero-Config Discovery
 
-**Status**: ready
+**Status**: in-flight
 **Mission**: [Zero-Config Discovery & Deterministic Speaker Targeting](../../mission.md)
 
 ## Contributing to Criteria
@@ -110,6 +110,25 @@ smoke scripts are brought in line, and the version goes to 0.4.0.
 - Trade-off: `list_speakers` changes from "may return `[]`" to "raises when
   nothing is found". The mission criterion requires this.
 
+**Amendment (in-flight, 2026-09-28): learned seeds + rate-limited scan**
+- The original "Pipeline order" decision above stands as written. Hardware
+  probing after leg 01 showed that the full-speed scan (SoCo's default of 256
+  threads) makes connections to real speakers fail for 1–3 s afterwards,
+  with `ENETUNREACH`, `EHOSTUNREACH` and timeouts. A cold `list_speakers`
+  failed once with `Errno 101`.
+- Change: the IPs from the last successful discovery become in-process
+  **learned seeds**, tried after configured seeds and before the scan. The
+  scan uses `max_threads=32`: about 2.5 s, with no disruption in the trials.
+- Cache contract for learned seeds:
+  - Source of truth: the last successful discovery.
+  - Rebuild trigger: every successful discovery replaces them.
+  - Staleness: harmless. A stale IP fails the TCP gate and the pipeline
+    falls through to the scan.
+  - No invalidation is needed on forced refresh, because any live member
+    reports the current household topology.
+- Trade-off: a cold start takes about 2.5 s instead of 0.5 s, once per
+  process. Steady-state refreshes take about 0.05–0.8 s and never scan.
+
 **Cache freshness: 30 s TTL kept, plus one forced re-discovery on a name miss**
 - Source of truth: the household topology on the LAN. Maximum acceptable
   staleness is 30 s, which is unchanged.
@@ -168,7 +187,9 @@ smoke scripts are brought in line, and the version goes to 0.4.0.
   environment failure. It signals an environment or network failure, not bad
   input. `SpeakerNotFound(ValueError)` stays the bad-name error.
 - Accepted, named behavior changes caused by `_speakers_fresh` raising instead
-  of returning `[]`:
+  of returning `[]`. Every tool that resolves a speaker name now raises
+  `NoSpeakersFound` with diagnostics on total failure, instead of
+  `SpeakerNotFound(name, [])`. In addition:
   - `dissolve_all_groups` and `partymode` raise instead of silently doing
     nothing (`count: 0`).
   - `say("all")` raises `NoSpeakersFound` instead of `RuntimeError("No speakers
@@ -302,9 +323,9 @@ smoke scripts are brought in line, and the version goes to 0.4.0.
 8. **Hardware verification**: run `/mission-control:behavior-test zero-config-discovery`.
 
 ### Checkpoints
-- [ ] Discovery pipeline + diagnostics + controller miss-refresh landed; unit suite green (78 + new)
-- [ ] Forced refreshes (`refresh_speakers`, name-miss retry, reboot, stale-coordinator retry) proven to bypass SoCo's 5 s topology cache, with a unit test
-- [ ] Docs, tool descriptions, smoke scripts, version 0.4.0 aligned
+- [x] Discovery pipeline + diagnostics + controller miss-refresh landed; unit suite green (78 + new = 112)
+- [x] Forced refreshes (`refresh_speakers`, name-miss retry, reboot, stale-coordinator retry) proven to bypass SoCo's 5 s topology cache, with a unit test
+- [x] Docs, tool descriptions, smoke scripts, version 0.4.0 aligned
 - [ ] Behavior test `zero-config-discovery` passes on the operator's LAN
 
 ### Adaptation Criteria
@@ -332,12 +353,17 @@ smoke scripts are brought in line, and the version goes to 0.4.0.
 
 > **Note:** These are tentative suggestions, not commitments. Legs are planned and created one at a time as the flight progresses. This list will evolve based on discoveries during implementation.
 
-- [ ] `01-discovery-pipeline`: seeds → bounded scan → SSDP pipeline,
+- [x] `01-discovery-pipeline`: seeds → bounded scan → SSDP pipeline,
   `SONOS_SCAN_NETWORKS`, `NoSpeakersFound` diagnostics, controller
   miss-refresh, unit tests, docs/tool descriptions, zero-config smoke scripts
   + `discovery_smoke.py`, version 0.4.0. *High-risk tier (cache behavior +
-  shared-module interface), so it gets a design review.*
-- [ ] `02-hardware-discovery-verification`: run behavior test
+  shared-module interface), so it gets a design review.* Landed 2026-09-28.
+- [x] `02-learned-seeds-gentle-scan`: *(added in flight, 2026-09-28)* The
+  full-speed subnet scan was found to disrupt follow-up LAN connections for
+  1–3 s. This leg adds learned seeds, so the steady state never scans, and
+  limits the scan to 32 threads. *High-risk tier (a new cache).* See the
+  flight log.
+- [ ] `03-hardware-discovery-verification`: run behavior test
   `zero-config-discovery` on the operator's LAN. Fixes found here loop back
   as new commits before the flight lands.
 
