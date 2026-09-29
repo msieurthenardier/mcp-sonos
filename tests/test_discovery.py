@@ -741,13 +741,20 @@ def test_say_inline_retry_clears_socos_cache(monkeypatch, stub_controller_say):
     # unconditionally, before its topology snapshot — on top of the
     # pre-existing stale-coordinator retry's clear. That's a behavior
     # INCREASE (more cache-clearing, not less), so the exact count goes
-    # from 1 to 2. The two assertions below keep the test's original
-    # intent ("the retry clears SoCo's cache") distinct from the new
-    # pre-snapshot clear: exactly one clear had already happened by the
-    # time play_uri raised (the `_plan_targets` clear), and at least one
-    # more happened afterward (the retry's `invalidate()`).
-    assert stale.clear_count_at_failure == 1
-    assert stale.zone_group_state.clear_cache_count == 2
+    # from 1 to 2.
+    #
+    # Leg 4 (coordinator-view hardening) adds one more: `_execute_plan`
+    # now ends with an unconditional `_sync_view(c0, expect_coordinator=True)`
+    # — a forced fresh poll through c0 itself — before returning, so the
+    # count by the time `play_uri` raises goes from 2 to 3 total (the
+    # `_plan_targets` clear, then `_sync_view`'s), with one further clear
+    # after the failure (the stale-coordinator retry's `invalidate()`).
+    # The two assertions below keep the test's original intent ("the retry
+    # clears SoCo's cache") distinct from the pre-`play_uri` clears: two
+    # clears had already happened by the time `play_uri` raised, and at
+    # least one more happened afterward.
+    assert stale.clear_count_at_failure == 2
+    assert stale.zone_group_state.clear_cache_count == 3
 
 
 def test_ttl_expiry_does_not_clear_socos_cache(monkeypatch, stub_controller):

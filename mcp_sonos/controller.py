@@ -15,7 +15,7 @@ import urllib.request
 from dataclasses import dataclass
 from http.client import RemoteDisconnected
 from pathlib import Path
-from typing import Callable
+from typing import Callable, TypeVar
 
 from soco import SoCo
 
@@ -35,6 +35,16 @@ from .tts import synthesize
 # 0.16-0.32s), so 5s is a generous cap, not a tuning knob.
 GROUP_CONFIRM_TIMEOUT_SECONDS = 5.0
 GROUP_CONFIRM_POLL_INTERVAL_SECONDS = 0.1
+
+# Cap for `_sync_view(..., expect_coordinator=True)`'s resync-and-retry poll
+# (leg 4, coordinator-view hardening). Topology views are per-speaker and
+# eventually consistent — see the CLAUDE.md grouping invariant. On hardware
+# a genuine view-lag clears within SoCo's own 5s ZGS cache window, so 3s is
+# a generous-but-bounded cap, not a tuning knob.
+SYNC_VIEW_TIMEOUT_SECONDS = 3.0
+SYNC_VIEW_POLL_INTERVAL_SECONDS = 0.1
+
+_T = TypeVar("_T")
 
 
 # How long a single TTS clip is allowed to play before we give up
@@ -279,6 +289,73 @@ class SonosController:
             except Exception:
                 continue
 
+    def _sync_view(self, speaker: SoCo, *, expect_coordinator: bool = False) -> None:
+        """Force the next topology read touching `speaker` to come from
+        `speaker`'s OWN `ZoneGroupState` view — not a cached view SoCo last
+        polled through some other (possibly lagging) speaker.
+
+        Topology views are per-speaker and eventually consistent; SoCo
+        caches whichever speaker it last polled, per household, for 5s
+        (see the CLAUDE.md grouping invariant this leg adds). Reading
+        `speaker.is_coordinator` after clearing the cache is what forces
+        the fresh poll: it calls `zone_group_state.poll(speaker)`, i.e. a
+        `GetZoneGroupState` request made TO `speaker` itself — see
+        `soco/core.py:is_coordinator` and `soco/zonegroupstate.py:poll`.
+
+        With `expect_coordinator=True`, re-polls (via `self._sleep`, never
+        a raw `time.sleep`, so tests can no-op it) every
+        `SYNC_VIEW_POLL_INTERVAL_SECONDS` up to `SYNC_VIEW_TIMEOUT_SECONDS`
+        until `speaker.is_coordinator` reports True. Raises `GroupingError`,
+        naming the view lag, if it never does within the cap.
+        """
+        self._clear_socos_zgs_cache([speaker])
+        if speaker.is_coordinator or not expect_coordinator:
+            return
+        deadline = time.monotonic() + SYNC_VIEW_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            self._sleep(SYNC_VIEW_POLL_INTERVAL_SECONDS)
+            self._clear_socos_zgs_cache([speaker])
+            if speaker.is_coordinator:
+                return
+        raise GroupingError(
+            f"{speaker.player_name!r}'s own topology view never reported "
+            f"it as coordinator within {SYNC_VIEW_TIMEOUT_SECONDS}s "
+            "(topology view lag)."
+        )
+
+    def _on_coordinator(self, c0: SoCo, action: Callable[[SoCo], _T]) -> _T:
+        """Run a coordinator-only `action(c0)`, recovering once from a
+        stale topology view.
+
+        On `SoCoSlaveException`, forces a resync from `c0`'s own view
+        (`_sync_view(c0, expect_coordinator=True)` — which itself raises
+        `GroupingError` if `c0`'s view never catches up within the cap),
+        then retries `action(c0)` exactly once. If the retry ALSO raises
+        `SoCoSlaveException`, wraps it as `GroupingError` rather than
+        letting the raw SoCo exception escape — callers (e.g. `play_stream`)
+        rely on `GroupingError` being the one exception type a coordinator-
+        view failure surfaces as.
+
+        Use for any coordinator-only call that follows a topology read
+        which may have gone through a different, possibly lagging, speaker
+        — `play_stream`'s `stop`/`play_uri`, `play_url`'s `play_uri`. NOT
+        used by `say()`, which keeps its own `with_stale_coord_retry`
+        (unbounded-wait, invalidate-and-re-resolve) — see CLAUDE.md.
+        """
+        from soco.exceptions import SoCoSlaveException
+
+        try:
+            return action(c0)
+        except SoCoSlaveException:
+            self._sync_view(c0, expect_coordinator=True)
+            try:
+                return action(c0)
+            except SoCoSlaveException as e2:
+                raise GroupingError(
+                    f"{c0.player_name!r} still raised a coordinator-only "
+                    f"error after a topology-view resync: {e2}"
+                ) from e2
+
     def refresh(self) -> list[dict]:
         """Force a fresh discovery, bypassing both cache layers.
 
@@ -399,11 +476,26 @@ class SonosController:
         Raises `GroupingError` on a mid-execution exception or a
         confirmation timeout. No rollback (see `GroupingError`'s docstring).
         """
+        from soco.exceptions import SoCoSlaveException
+
         plan = ctx.plan
         by_uid = ctx.speakers_by_uid
         try:
             for uid in plan.stop:
-                by_uid[uid].stop()
+                coord = by_uid[uid]
+                # Force this stop's coordinator-only call to see a FRESH
+                # view of ITSELF first — a stale cached view (last polled
+                # through some other speaker) is exactly the class of bug
+                # the leg 3 hardware run hit (see CLAUDE.md's per-speaker
+                # view-lag grouping invariant). If it still raises after
+                # that, resync-and-retry once before letting it become a
+                # GroupingError via the `except Exception` below.
+                self._sync_view(coord)
+                try:
+                    coord.stop()
+                except SoCoSlaveException:
+                    self._sync_view(coord, expect_coordinator=True)
+                    coord.stop()
             for uid in plan.unjoin:
                 by_uid[uid].unjoin()
             c0 = by_uid[plan.coordinator_uid]
@@ -417,6 +509,16 @@ class SonosController:
         self._confirm_bystanders_stopped(ctx)
 
         c0 = by_uid[plan.coordinator_uid]
+        # The LAST poll before building the response — and before any
+        # further coordinator-only call the caller makes on c0 — MUST come
+        # from c0's own view. `_confirm_bystanders_stopped`'s last read goes
+        # THROUGH each bystander, which can leave SoCo's shared 5s cache
+        # holding a lagging bystander's stale view of c0 (the leg 3
+        # hardware bug). Re-sync from c0 itself, unconditionally — even on
+        # the fast path with no mutations and no bystanders, the cache may
+        # still hold another speaker's view from `_plan_targets`' snapshot
+        # — and only then read `group_members` from it.
+        self._sync_view(c0, expect_coordinator=True)
         stopped_names = [
             by_uid[uid].player_name for uid in plan.bystanders if uid in by_uid
         ]
@@ -477,6 +579,15 @@ class SonosController:
                 )
 
     def _grouping_error(self, step: str, ctx: _TargetPlanContext, detail: str) -> GroupingError:
+        # Deliberately NO `_sync_view(c0, expect_coordinator=True)` here,
+        # unlike the success path in `_execute_plan`: a `GroupingError`
+        # always aborts the caller (raised straight through `play_url` /
+        # `play_stream` / `playlist_play`; `_execute_plan`'s own callers
+        # never issue another coordinator-only call on this ctx afterwards),
+        # so there is no subsequent call a stale view could break. The
+        # clear-cache-then-read below is diagnostic only, best-effort, and
+        # reads whatever view happens to be cached after clearing it once —
+        # it does not attempt to resolve per-speaker view lag.
         self._clear_socos_zgs_cache(self._speakers)
         involved_uids = (
             list(ctx.plan.stop)
@@ -572,7 +683,10 @@ class SonosController:
         def _run() -> None:
             result_box.append(self._execute_plan(ctx))
             by_uid = ctx.speakers_by_uid
-            by_uid[ctx.plan.coordinator_uid].play_uri(url, title=title or "MCP playback")
+            coord = by_uid[ctx.plan.coordinator_uid]
+            self._on_coordinator(
+                coord, lambda c: c.play_uri(url, title=title or "MCP playback")
+            )
 
         self._with_queue_resume(
             c0,
@@ -616,7 +730,15 @@ class SonosController:
         plain first, confirm the transport actually reaches PLAYING, and fall
         back to the radio scheme (with a short retry for the transient
         701 ``Transition not available``) otherwise. Raises RuntimeError if
-        neither scheme sustains playback.
+        neither scheme sustains playback (a genuine scheme rejection or a
+        stall to STOPPED — see the "incompatible" wording below).
+
+        A coordinator-view failure (leg 4) is a DIFFERENT exception: `stop`
+        and `play_uri` here run through `_on_coordinator`, which retries once
+        after a forced resync and, if that still fails, raises
+        `GroupingError`. That propagates immediately — no scheme fallback,
+        no "may be incompatible" wording — because the failure has nothing
+        to do with the speaker's codec/format support.
         """
         validate_http_url(url)
         ctx = self._plan_targets(speakers, detach=detach)
@@ -629,16 +751,22 @@ class SonosController:
             # is almost always residual state from a just-prior stop/play. Give
             # the coordinator a moment to settle before driving it.
             try:
-                coord.stop()
+                self._on_coordinator(coord, lambda c: c.stop())
+            except GroupingError:
+                raise
             except Exception:
                 pass
             self._sleep(1.5)
             started = False
             for _ in range(3):  # transient 701 retry (radio scheme esp.)
                 try:
-                    coord.play_uri(uri, title=title or "Live stream")
+                    self._on_coordinator(
+                        coord, lambda c: c.play_uri(uri, title=title or "Live stream")
+                    )
                     started = True
                     break
+                except GroupingError:
+                    raise
                 except Exception as e:
                     last_reason = str(e)
                     if "701" in last_reason:

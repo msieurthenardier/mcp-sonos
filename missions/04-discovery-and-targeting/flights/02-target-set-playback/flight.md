@@ -489,6 +489,12 @@ is updated in the same flight (mission constraint).
   `playlist_from_page` target sets, the control-tool session-lookup
   fallback, the README system-prompt rewrite, CLAUDE.md, version 0.5.0, and
   the `targeting_smoke.py` apparatus. *High-risk tier (session keying).*
+- [x] `04-coordinator-view-hardening`: *(added in flight, 2026-09-29)* The
+  leg 03 run hit false `SoCoSlaveException`s on `c0` right after
+  regrouping. The cause is SoCo caching a lagging bystander's topology view.
+  This leg makes the last read come from `c0`'s own view and adds a
+  resync-and-retry. It also hardens the apparatus and repairs spec step 7.
+  *High-risk tier.*
 - [ ] `03-hardware-targeting-verification`: behavior test
   `target-set-playback`, muted, on the operator's household.
 

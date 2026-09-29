@@ -129,6 +129,49 @@ decision if you're touching this.
   moments ago — by the Sonos app, or another call — must never feed the
   planner stale topology), and the confirmation poll clears it before
   every read too (SoCo's own cache is 5s).
+- **Topology views are per-speaker and eventually consistent; SoCo caches
+  whichever speaker it last polled, per household, for 5s.** The last ZGS
+  poll before any coordinator-only call must come from that coordinator's
+  own view (`_sync_view`). Hardware-verified by Flight 2's leg 3 behavior
+  test: `_confirm_bystanders_stopped` polling through a lagging bystander
+  after `c0`'s own confirmation left the shared cache holding a view where
+  `c0` was still a follower, so the very next `@only_on_master` call on
+  `c0` (`play_uri`, `stop`) falsely raised `SoCoSlaveException`. Leg 4
+  fixed this with `_sync_view` (force a fresh poll from a given speaker,
+  optionally waiting up to 3s for it to report itself coordinator) and
+  `_on_coordinator` (run a coordinator-only action, resync-and-retry once
+  on `SoCoSlaveException`) — see the "Coordinator-view hardening" section
+  below.
+
+### Coordinator-view hardening (Flight 2, leg 4)
+
+- `_sync_view(speaker, *, expect_coordinator=False)` clears SoCo's ZGS
+  cache, then reads `speaker.is_coordinator` to force a poll made TO
+  `speaker` itself (`zone_group_state.poll(speaker)` — see
+  `soco/core.py:is_coordinator` / `soco/zonegroupstate.py:poll`). With
+  `expect_coordinator=True`, it re-polls (via `self._sleep`) every 0.1s up
+  to 3s until `speaker.is_coordinator` is True, raising `GroupingError`
+  naming the view lag if it never is.
+- `_on_coordinator(c0, action)` runs a coordinator-only `action(c0)`; on
+  `SoCoSlaveException` it resyncs (`_sync_view(c0, expect_coordinator=True)`)
+  and retries once, wrapping a second failure as `GroupingError` rather than
+  letting the raw SoCo exception escape. Used by `play_stream`'s `stop`/
+  `play_uri` and `play_url`'s `play_uri`.
+- `_execute_plan` syncs each planned `stop()`'s coordinator immediately
+  before calling it (resync-and-retry once on `SoCoSlaveException`), and
+  ends — unconditionally, even on the fast path — with
+  `_sync_view(c0, expect_coordinator=True)` before reading `group_members`
+  from `c0`. `_grouping_error` deliberately does NOT do this trailing sync:
+  a `GroupingError` always aborts the caller before any further
+  coordinator-only call, so there's nothing left for a stale view to break.
+- `playlists.py`'s `_play_via_queue` (`clear_queue`) and `_worker`
+  (`play_uri`) both get one stale-coordinator retry via the existing
+  `with_stale_coord_retry` helper, for the same reason.
+- **Accepted asymmetry, noted as a follow-up candidate**: `say()`'s own
+  `with_stale_coord_retry` retry is unbounded-wait (invalidate + re-resolve
+  + retry once, no poll loop) rather than `_sync_view`'s bounded
+  poll-with-timeout. It passed leg 3's hardware run as-is and was left
+  unchanged — `_on_coordinator` was not retrofitted onto `say()`.
 
 **`mcp_sonos/audio_host.py`** — persistent threaded HTTP server. Sonos
 plays HTTP URIs, not local paths, so we host the TTS cache (and any

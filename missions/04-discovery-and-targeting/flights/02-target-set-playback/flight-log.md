@@ -298,6 +298,167 @@ No hangs; no hardware contact of any kind (no smoke script or
 
 ---
 
+### Leg 04: `coordinator-view-hardening`
+**Status**: landed. Started/completed 2026-09-29 (single Developer session).
+
+**Changes made**:
+- `mcp_sonos/controller.py`:
+  - New `SonosController._sync_view(speaker, *, expect_coordinator=False)`:
+    clears SoCo's ZGS cache for `speaker`'s household, then reads
+    `speaker.is_coordinator` to force a poll made TO `speaker` itself.
+    With `expect_coordinator=True`, re-polls via `self._sleep` every
+    `SYNC_VIEW_POLL_INTERVAL_SECONDS` (0.1s) up to
+    `SYNC_VIEW_TIMEOUT_SECONDS` (3.0s), raising `GroupingError` naming the
+    view lag if `speaker.is_coordinator` never becomes true.
+  - New `SonosController._on_coordinator(c0, action)`: runs a
+    coordinator-only `action(c0)`; on `SoCoSlaveException`, resyncs via
+    `_sync_view(c0, expect_coordinator=True)` and retries once — if the
+    retry also raises `SoCoSlaveException`, wraps it as `GroupingError`
+    instead of letting the raw SoCo exception escape.
+  - `_execute_plan`: each planned `stop()` is now preceded by
+    `_sync_view(coord)`; a `SoCoSlaveException` from `stop()` triggers one
+    `_sync_view(coord, expect_coordinator=True)` + retry before becoming a
+    `GroupingError` via the existing `except Exception` wrapper. After
+    `_confirm_bystanders_stopped` (whose own read goes through each
+    bystander last, which is exactly what left the shared ZGS cache
+    holding a stale view of `c0` in the leg 3 hardware trace), the method
+    now ends — unconditionally, even on the fast path — with
+    `_sync_view(c0, expect_coordinator=True)` before reading
+    `group_members` from `c0`.
+  - `_grouping_error`: added a code comment explaining why it does NOT do
+    a trailing sync (a `GroupingError` always aborts the caller before any
+    further coordinator-only call, so there is nothing left for a stale
+    view to break).
+  - `play_url`: its `play_uri` call now goes through `_on_coordinator`.
+  - `play_stream`: its pre-attempt `stop()` and its `play_uri()` both go
+    through `_on_coordinator`, each wrapped in `except GroupingError:
+    raise` ahead of the existing broad `except Exception` — so a
+    `GroupingError` propagates immediately, skipping the scheme fallback
+    entirely, instead of being swallowed into `last_reason` and
+    eventually mislabeled by the "may be incompatible" wording (which now
+    only applies to a genuine 714 scheme rejection or a stall to
+    `STOPPED`).
+- `mcp_sonos/playlists.py`:
+  - `_play_via_queue`'s `coord.clear_queue()` is now wrapped in the
+    existing `with_stale_coord_retry` (same pattern already used for its
+    `play_from_queue`) — previously unwrapped, so a stale-view
+    `SoCoSlaveException` there raised straight out of `play()`.
+  - `_worker`'s `coord.play_uri(...)` now gets one stale-coordinator retry
+    through the same helper before falling back to its "log and skip the
+    track" branch; `coord` is reassigned to whichever coordinator
+    succeeded, so the poll/stop calls later in the same iteration target
+    the right speaker.
+- `tests/_fakes.py`: opt-in per-household view-lag modeling on
+  `FakeHousehold` (`enable_lag()`, `queue_stale_override(uid, snapshot)`,
+  a single shared cached `{uid: coordinator_uid}` view + `last_polled_uid`
+  bookkeeping) and a matching opt-in `SoCoFake.is_coordinator`/`.group`
+  property pair that reads the household's cached (possibly stale) view
+  when lag mode is on, falling back to today's simplistic ground-truth
+  behavior otherwise — zero behavior change for every fake that never
+  calls `enable_lag()`. `SoCoFake.play_uri`/`stop`/`clear_queue`/
+  `play_from_queue` now raise `SoCoSlaveException` (imported lazily,
+  matching the module's existing SoCo-independence convention) when the
+  cached view says `self` isn't the coordinator, in lag mode only. Added
+  `clear_queue_raise`/`play_uri_raise` "raise once" fields, mirroring the
+  existing `play_from_queue_raise`/`seek_raise` pattern.
+- New `tests/test_coordinator_view_hardening.py` (5 tests): reproduces
+  the leg 3 hardware trace end-to-end through `play_stream` (including the
+  stale `group_members` symptom), pins `_execute_plan`'s last poll coming
+  from `c0`, pins `_on_coordinator`'s exactly-one-retry-then-`GroupingError`
+  contract, pins a planned `stop()` recovering after a resync, and pins
+  that a slave-exception failure's message never says "incompatible".
+- New `tests/test_playlist_stale_coord_retry.py` (2 tests): `clear_queue`'s
+  and the worker's `play_uri`'s stale-coordinator retries.
+- `tests/test_discovery.py::test_say_inline_retry_clears_socos_cache`:
+  updated the exact `clear_cache_count` assertions (1→2, 2→3) to account
+  for `_execute_plan`'s new unconditional trailing `_sync_view` clear —
+  a real, intentional behavior increase (more clearing, not less), same
+  class of update this test already absorbed once before in leg 1/2. No
+  assertion was weakened; the exact-count check stayed exact.
+- `targeting_smoke.py`: added `_is_transient_error`/`_retry_transient`
+  helpers (retry `OSError`/`requests.ConnectionError`/transient-701
+  `SoCoUPnPException` up to 3x with backoff) and a shared
+  `_coordinators_of` helper. `topology` and `stop-all` now read each
+  group's row by syncing THAT row's own coordinator's view
+  (`controller._sync_view`) immediately before reading it, rather than
+  clearing the cache once and reading whichever speaker came first.
+  `stop-all` is rewritten: per-coordinator sync-then-stop with a
+  resync-and-retry on `SoCoSlaveException` (or backoff-retry on a
+  transient error) up to 3 attempts, errors collected (never silently
+  swallowed) into `errors`, then a full re-read of every coordinator's own
+  state into `still_playing` — exits non-zero and lists offenders if
+  anything is still `PLAYING`, and always prints the full
+  `stopped`/`errors`/`still_playing` JSON first. `save-state`, `mute-all`,
+  `group`, and `restore-state` retry transient errors on their
+  reads/writes. `restore-state`'s live match report is always produced in
+  full — an unreadable speaker is reported per-row (`reason`) rather than
+  aborting the report — and it exits non-zero only if a mismatch or
+  unreadable speaker remains in that report. Deleted a stale duplicate
+  `cmd_stop_all` definition left over from before this leg. Help text for
+  `topology` and `stop-all` documents the per-coordinator-own-view and
+  retry/exit-code behavior.
+- `tests/behavior/target-set-playback.md`: added a dated Revision History
+  entry; step 7's setup no longer starts a stream on Fireplace Room before
+  regrouping (that made Fireplace Room a `PLAYING` coordinator, so rule 2
+  always picked it as `c0`, so the intended "non-`c0` target coordinates
+  bystanders" scenario never ran) — a note explains why, referencing step
+  9's already-passing shape as the template; the stream-reachability
+  precondition's active check moved from step 3 to step 2 (where the
+  first stream start actually is); step 11's expected wording corrected
+  to "cannot be combined with" (the real message), from "cannot be mixed
+  with".
+- `CLAUDE.md`: grouping invariants gained the per-speaker
+  eventually-consistent-views bullet the leg specifies, plus a new
+  "Coordinator-view hardening (Flight 2, leg 4)" subsection summarizing
+  `_sync_view`/`_on_coordinator`, the playlist-engine retries, the
+  deliberate no-trailing-sync-on-`_grouping_error` note, and `say()`'s
+  accepted unbounded-wait-vs-bounded-poll asymmetry as a follow-up
+  candidate.
+
+**Verification**:
+- `timeout 180 .venv/bin/python -m pytest -q` → 172 passed (was 165 at leg
+  start: +5 `test_coordinator_view_hardening.py`, +2
+  `test_playlist_stale_coord_retry.py`; zero hardware contact from the
+  suite itself).
+- `grep -n "_sync_view\|_on_coordinator" mcp_sonos/controller.py` →
+  present in `_sync_view`'s/`_on_coordinator`'s own definitions,
+  `_execute_plan` (stop loop + trailing sync), `play_url`, and
+  `play_stream`.
+- `timeout 30 .venv/bin/python targeting_smoke.py --help` → exit 0, lists
+  all eight subcommands with the updated `topology`/`stop-all` help text.
+  No other `targeting_smoke.py` subcommand was run — this leg made no
+  hardware contact; leg 03 re-runs the full behavior test afterward.
+- Fix-required verification (temporarily reverted, then restored, each
+  confirmed against the still-green 172-test suite afterward):
+  - Commented out `_execute_plan`'s trailing `_sync_view(c0,
+    expect_coordinator=True)` → the hardware-case reproduction test failed
+    exactly as predicted, on the stale `group_members` assertion
+    (`['Dining Room', 'Patio']` instead of `['Patio']`) — reproducing the
+    leg 3 hardware symptom precisely. Restored; suite green again.
+  - Reverted `_play_via_queue`'s `clear_queue()` wrap back to a bare call
+    → its stale-coordinator-retry test failed with an uncaught
+    `SoCoSlaveException` raised straight out of `play()`. Restored.
+  - Reverted `_worker`'s `play_uri` wrap back to a bare call → its test
+    failed on "the track never actually played" (the worker's log-and-skip
+    fallback fired instead), matching the log line `failed to play ...
+    can only be called/used on the coordinator in a group`. Restored.
+
+**Deviations from the leg spec**: none of substance.
+- The hardware-case reproduction test needed the queued stale override on
+  the bystander to be queued TWICE, not once, once the fake's household
+  had to consume one copy (harmlessly) via the leg's own new pre-stop
+  `_sync_view(coord)` call before the second copy could reach
+  `_confirm_bystanders_stopped`'s read — a fake-modeling detail, not a
+  deviation from the spec's intent.
+- The "planned stop() on a lagging coordinator" test models the lag as the
+  STOP target's own device not yet having caught up with its current
+  (correct) coordinator role, rather than a bystander's stale view of it —
+  a different, simpler instance of the same "topology views are
+  per-speaker and eventually consistent" invariant, chosen because the
+  bystander's queued-override approach is what test 1 already covers.
+
+---
+
 ## Flight Director Notes
 
 ### 2026-09-29: Planning probes (ground truth for the design decisions)
@@ -459,3 +620,83 @@ No hangs; no hardware contact of any kind (no smoke script or
   [HANDOFF:review-needed]
 
 ### 2026-09-29: Flight review — Reviewer [HANDOFF:confirmed] for legs 01–02 (165 passed; planner join-invariant and snapshot-before-stop ordering traced; no weakened assertions). Two non-blocking notes accepted as-is: unchecked criteria boxes pending leg 03; `targeting_smoke.py` forward-ref `SoCo` annotation (harmless under `from __future__ import annotations`). Legs 01–02 → completed; leg 03 (hardware behavior test) pending.
+
+### 2026-09-29: Flight commit, PR, and leg 03
+- Flight commit `c34d716` was pushed. Draft **PR #12** is open against
+  `flight/01-zero-config-discovery`, so it is stacked on #11.
+- **Leg 03 `hardware-targeting-verification`: tiered LOW-RISK.** It changes
+  no code; it is verification only. There is a safety gate: all speakers
+  must be confirmed muted before any playback step.
+
+### 2026-09-29: Leg 03 behavior-test run: 9 of 12 passed. Root cause found, fix leg 04 added
+- Run log: `tests/behavior/target-set-playback/runs/2026-09-29-03-54-28.md`.
+  Every speaker was muted throughout. The Flight Director checked
+  pre-restore safety, and the household was **verified restored exactly**.
+- **Passed**, meeting these criteria:
+  - exact target set (step 3)
+  - untouched groups (step 5)
+  - opt-out merge (steps 2 and 8)
+  - targeted `say` (step 9)
+  - `say(["all"])` (step 10)
+  - the mixed-`"all"` rejection (step 11)
+- **Step 6 FAIL, a product defect.** `play_stream(["Patio"])`, where Patio
+  was a follower of bystander Dining Room, raised "`play_uri` can only be
+  called on the coordinator".
+  - The Flight Director reproduced it muted with instrumentation over 3
+    trials: 2 of 3 hit a false `SoCoSlaveException`, where cached
+    `Patio._is_coordinator` was False but a fresh read from Patio said True.
+  - In the same trials, the response `group_members` showed a stale
+    [Dining Room, Patio].
+  - **Root cause:** per-speaker ZGS views are eventually consistent.
+    `_confirm_bystanders_stopped` polls through lagging bystanders *after*
+    the `c0` confirmation, so SoCo's 5 s cache holds a stale view in which
+    `c0` is still a follower. This was not caught at planning because the
+    contention probes exercised join and unjoin, not coordinator-only calls
+    straight after a read through a bystander.
+- **Step 7 FAIL, a spec defect.** The setup made Fireplace a `PLAYING`
+  coordinator, so rule 2 picked it as `c0`, and the delegate scenario could
+  never happen. The Validator's code trace concurred. Step 9 exercised the
+  real delegate path and passed.
+- **Step 12 FAIL, apparatus plus environment.** A transient `ENETUNREACH`
+  crashed the `restore-state` re-read. The state itself was fully restored,
+  confirmed by three independent reads.
+- **The `stop-all` `[]` anomaly** in steps 4 and 6 has the same root cause
+  as step 6: the apparatus swallowed the `SoCoSlaveException`s.
+- **New leg 04 `coordinator-view-hardening`: tiered HIGH-RISK** (cache and
+  view semantics, and retry behavior). Leg 03 stays `in-flight` and does
+  not land while its test fails; per protocol, it is re-run after leg 04
+  is committed as a new commit.
+- **Noted, out of scope:** after step 10's `say(["all"])`, Fireplace Room's
+  last URI was not the TTS clip. That comes from `_say_all`, which predates
+  this flight, and follower URI reads are unreliable. Carried to the debrief.
+
+### 2026-09-29: Leg 04 design review, cycle 1 (Developer)
+- Verdict: approve with changes. The central premise is verified in the
+  SoCo source: `is_coordinator` → `zone_group_state.poll(self)`, which is a
+  `GetZoneGroupState` call to that speaker's own IP. The bug is traced
+  precisely to `_confirm_bystanders_stopped` polling through bystanders
+  after the `c0` confirmation.
+- **[high] Fixed.** `play_stream`'s broad `except` handlers would swallow
+  `GroupingError`, so the leg now re-raises it explicitly and tests the
+  exception type.
+- **[medium] Fixed.**
+  - `_play_via_queue`'s `clear_queue()` and `_worker`'s `play_uri` are both
+    wrapped with the existing `with_stale_coord_retry`, and `playlists.py`
+    was added to the outputs.
+  - A concrete design sketch for the fake's caching model was added.
+- **[low] Fixed.** `add_multiple_to_queue` is not `@only_on_master`, and
+  the context now says so.
+- Also recorded:
+  - `_grouping_error` gets no trailing sync, deliberately.
+  - Apparatus topology rows reflect each coordinator's view at read time.
+  - `say`'s weaker retry is noted as a follow-up.
+- These were additive precision changes, so no second cycle. Leg marked
+  `ready`. [HANDOFF:review-needed]
+
+### 2026-09-29: Leg 04 review and commit
+- Reviewer: [HANDOFF:confirmed], with 172 passed. The review traced every
+  path after `_execute_plan` and found none that polls through a non-`c0`
+  speaker before a coordinator-only call. One cosmetic docstring nit was
+  accepted as-is: the `last_polled_uid` wording in `FakeHousehold`.
+- Leg 04 marked `completed` and committed as a new commit, with no amend.
+  Next, leg 03 re-runs `target-set-playback`.

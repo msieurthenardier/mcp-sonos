@@ -372,7 +372,16 @@ class PlaylistManager:
             )
             items.append(didl_item)
 
-        coord.clear_queue()
+        # clear_queue is @only_on_master on real SoCo — wrap it with the
+        # same stale-coordinator retry used below for play_from_queue (leg
+        # 4). add_multiple_to_queue is NOT @only_on_master (verified in
+        # soco/core.py), so it needs no such wrap.
+        with_stale_coord_retry(
+            coord=coord,
+            action=lambda c: c.clear_queue(),
+            invalidate=self._invalidate_speakers_cache,
+            resolve=lambda: self._resolve_coordinator(speaker.player_name)[1],
+        )
         coord.add_multiple_to_queue(items)
 
         # DD-B: SHUFFLE_NOREPEAT intentional — one pass, like worker path.
@@ -556,7 +565,20 @@ class PlaylistManager:
                     break
 
                 try:
-                    coord.play_uri(item.url, title=title)
+                    # Leg 4: one stale-coordinator retry before giving up on
+                    # this track. A false SoCoSlaveException right after
+                    # group formation (the same per-speaker view-lag class
+                    # documented in CLAUDE.md) would otherwise silently skip
+                    # a perfectly playable track. `coord` is reassigned to
+                    # whichever coordinator actually succeeded, so the
+                    # poll/stop calls below the wait loop target the right
+                    # speaker if a re-resolve happened.
+                    coord = with_stale_coord_retry(
+                        coord=coord,
+                        action=lambda c: c.play_uri(item.url, title=title),
+                        invalidate=self._invalidate_speakers_cache,
+                        resolve=lambda: self._resolve_coordinator(session.speaker_name)[1],
+                    )
                 except Exception as e:
                     log.warning(
                         "playlist %r: failed to play %s — skipping (%s)",
