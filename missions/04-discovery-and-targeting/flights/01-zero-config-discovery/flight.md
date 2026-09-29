@@ -1,6 +1,6 @@
 # Flight: Zero-Config Discovery
 
-**Status**: in-flight
+**Status**: landed
 **Mission**: [Zero-Config Discovery & Deterministic Speaker Targeting](../../mission.md)
 
 ## Contributing to Criteria
@@ -326,7 +326,7 @@ smoke scripts are brought in line, and the version goes to 0.4.0.
 - [x] Discovery pipeline + diagnostics + controller miss-refresh landed; unit suite green (78 + new = 112)
 - [x] Forced refreshes (`refresh_speakers`, name-miss retry, reboot, stale-coordinator retry) proven to bypass SoCo's 5 s topology cache, with a unit test
 - [x] Docs, tool descriptions, smoke scripts, version 0.4.0 aligned
-- [ ] Behavior test `zero-config-discovery` passes on the operator's LAN
+- [x] Behavior test `zero-config-discovery` passes on the operator's LAN
 
 ### Adaptation Criteria
 
@@ -363,7 +363,7 @@ smoke scripts are brought in line, and the version goes to 0.4.0.
   1–3 s. This leg adds learned seeds, so the steady state never scans, and
   limits the scan to 32 threads. *High-risk tier (a new cache).* See the
   flight log.
-- [ ] `03-hardware-discovery-verification`: run behavior test
+- [x] `03-hardware-discovery-verification`: run behavior test
   `zero-config-discovery` on the operator's LAN. Fixes found here loop back
   as new commits before the flight lands.
 
@@ -372,10 +372,10 @@ smoke scripts are brought in line, and the version goes to 0.4.0.
 ## Post-Flight
 
 ### Completion Checklist
-- [ ] All legs completed
+- [x] All legs completed
 - [ ] Code merged
-- [ ] Tests passing
-- [ ] Documentation updated
+- [x] Tests passing
+- [x] Documentation updated
 
 ### Verification
 - `.venv/bin/python -m pytest -q` green, with discovery covered by `tests/test_discovery.py`

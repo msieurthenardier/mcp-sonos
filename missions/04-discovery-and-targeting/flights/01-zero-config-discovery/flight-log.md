@@ -407,3 +407,11 @@ green with no anomalies. Leg 03 not yet run.
 - The spec status was promoted from `draft` to `active`.
 - The leg is marked `completed`. It is a verification-only leg, so it had no
   code and needed no review.
+
+### 2026-09-29: Flight landed [COMPLETE:flight]
+- All 3 legs are `completed`, and the flight log has an entry for each. Docs
+  were verified by the flight review: README, `.env.example`, CLAUDE.md and
+  the tool descriptions.
+- Flight status is `landed`, and it is checked off in `mission.md`. PR #11
+  was marked ready for review. "Code merged" remains open until the operator
+  merges.
