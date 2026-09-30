@@ -65,6 +65,18 @@ per process. Owns:
 - The TTS cache directory
 - The `PlaylistManager`
 
+The controller doesn't own every process-wide cache, though — it's the
+first state-ownership pattern in this codebase, not the only one.
+**`mcp_sonos/speakers.py`** has its own: module-level `_learned_seed_ips`,
+the IPs from the last successful `discover_speakers()` call, replaced
+wholesale on each success and left untouched when a call raises
+`NoSpeakersFound` (test-only reset via `_reset_learned_seeds()`). Its
+safety rests on one invariant: only one discovery runs at a time, which
+holds today because stdio transport plus synchronous tool handling
+serialize every MCP call. A transport or concurrency change that breaks
+that serialization must revisit this — either add a lock or move the
+state into the controller.
+
 Three helpers in `controller.py` are non-obvious but load-bearing:
 - `_coordinator_of(speaker)` — returns the speaker itself if SoCo
   reports `coordinator=None` (transient post-group-dissolve state).

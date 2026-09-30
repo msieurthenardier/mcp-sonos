@@ -335,3 +335,54 @@ def test_play_url_response_shape(monkeypatch, stub_controller):
     assert result["detached"] is False
     assert "requested" not in result
     assert "played_on_coordinator" not in result
+
+
+# ---------------------------------------------------------------------------
+# say() with a target set under a lagging bystander view (operator-approved
+# scope addition alongside squawk 0006 — see squawks/0006's Corrective
+# Action). Mirrors
+# tests/test_coordinator_view_hardening.py::test_play_stream_survives_lagging_bystander_view,
+# but for a two-name target set going through `say()`. `say()` shares
+# `_execute_plan` / `_confirm_bystanders_stopped` with `play_stream`, so
+# this proves the same leg-4 fix (the trailing `_sync_view(c0,
+# expect_coordinator=True)` in `_execute_plan`) covers `say()` too.
+# ---------------------------------------------------------------------------
+
+
+def test_say_target_set_survives_lagging_bystander_view(monkeypatch, stub_controller):
+    """Kitchen is already standalone (picked as c0 via the planner's
+    subset-match rule); T2 is a follower of bystander Dining Room.
+    `say(["Kitchen", "T2"], ...)` must: stop Dining Room (now a
+    bystander-of-one after T2 leaves), unjoin T2 from it, and join T2 into
+    Kitchen's group. Dining Room's own view lags behind the unjoin — it
+    still reports T2 as its follower when polled during
+    `_confirm_bystanders_stopped` — modeling the exact leg 3 hardware
+    staleness (same mechanism as
+    `test_coordinator_view_hardening.py::test_play_stream_survives_lagging_bystander_view`,
+    but here c0 -- Kitchen -- is untouched by the stale view and a second
+    target -- T2 -- is pulled out of the lagging group instead). `say()`
+    must still succeed and report accurate `group_members`."""
+    household = FakeHousehold().enable_lag()
+    kitchen = SoCoFake(player_name="Kitchen", uid="K")
+    dining = SoCoFake(player_name="Dining Room", uid="D")
+    t2 = SoCoFake(player_name="T2", uid="T2")
+    household.attach(kitchen, dining, t2)
+    household.group(dining, [t2])  # Dining Room coordinates T2
+    dining._transport = {"current_transport_state": "PLAYING"}
+    _wire_household(monkeypatch, stub_controller, [kitchen, dining, t2])
+
+    # Dining Room's own view hasn't caught up with T2 leaving yet. Queued
+    # TWICE, same reasoning as the play_stream hardening test: the first
+    # is consumed (harmlessly) by the per-stop `_sync_view(dining)`, the
+    # second by `_confirm_bystanders_stopped`'s later read-through-Dining.
+    stale_view = {dining.uid: dining.uid, t2.uid: dining.uid}
+    household.queue_stale_override(dining.uid, stale_view)
+    household.queue_stale_override(dining.uid, stale_view)
+
+    result = stub_controller.say(["Kitchen", "T2"], "hello")
+
+    assert result["targets"] == ["Kitchen", "T2"]
+    assert result["coordinator"] == "Kitchen"
+    assert set(result["group_members"]) == {"Kitchen", "T2"}
+    assert result["stopped"] == ["Dining Room"]
+    assert kitchen.get_current_transport_info()["current_transport_state"] == "PLAYING"

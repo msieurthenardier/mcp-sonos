@@ -52,6 +52,11 @@ household; two rows can reflect two different instants. `stop-all`,
 transient network errors (`OSError`, `requests`' `ConnectionError`, and
 `SoCoUPnPException` for the transient UPnP 701) up to 3 times with a short
 backoff — the same WSL2-host flakiness class Flight 1's debrief recorded.
+`restore-state`'s final match report additionally settle-polls each
+speaker's row (squawk 0007): a mismatch right after the joins can be pure
+view lag rather than a real restore failure, so each row is cleared and
+re-read, through that speaker's own view, until it matches expected or
+`SYNC_VIEW_TIMEOUT_SECONDS` elapses, before being recorded as a mismatch.
 """
 
 from __future__ import annotations
@@ -66,7 +71,14 @@ import requests
 from fastmcp import Client
 from soco.exceptions import SoCoSlaveException, SoCoUPnPException
 
-from mcp_sonos.controller import GroupingError, SonosController, _coordinator_of, _group_members_of
+from mcp_sonos.controller import (
+    SYNC_VIEW_POLL_INTERVAL_SECONDS,
+    SYNC_VIEW_TIMEOUT_SECONDS,
+    GroupingError,
+    SonosController,
+    _coordinator_of,
+    _group_members_of,
+)
 from mcp_sonos.server import mcp, register_tools
 
 DEFAULT_STREAM_URL = "http://ice1.somafm.com/groovesalad-128-mp3"
@@ -145,6 +157,24 @@ def cmd_save_state(path: str) -> None:
     _emit(data)
 
 
+def _read_speaker_row(s: "SoCo") -> tuple[int, bool, list[str], str]:
+    """One live-read attempt of `s`'s volume/mute/group-membership row.
+
+    Syncs `s`'s OWN view (leg 4 invariant) before reading its group, so the
+    read comes from `s` itself rather than a cached view SoCo last polled
+    through some other (possibly lagging) speaker. Transient network errors
+    on the volume/mute reads are retried via `_retry_transient`; a
+    `GroupingError` or other exception from the sync/group read propagates
+    to the caller.
+    """
+    volume = _retry_transient(lambda: s.volume)
+    muted = _retry_transient(lambda: s.mute)
+    controller._sync_view(s)
+    coord = _coordinator_of(s)
+    actual_members = sorted(_group_members_of(coord))
+    return volume, muted, actual_members, coord.player_name
+
+
 def cmd_restore_state(path: str) -> None:
     """Restore groups + volume/mute from `path`; always prints a live
     re-read match report (leg 4: even a speaker unreadable after retries is
@@ -214,27 +244,44 @@ def cmd_restore_state(path: str) -> None:
             report.append({"speaker": name, "matched": False, "reason": "not found"})
             any_unmatched = True
             continue
-        try:
-            volume = _retry_transient(lambda s=s: s.volume)
-            muted = _retry_transient(lambda s=s: s.mute)
-            # This speaker's row is read from ITS OWN coordinator's view —
-            # sync before reading, per the leg 4 invariant.
-            controller._sync_view(s)
-            coord = _coordinator_of(s)
-            actual_members = sorted(_group_members_of(coord))
-            coord_name = coord.player_name
-        except Exception as e:
+        expected_members = expected_group_of.get(name, [name])
+
+        # Settle-poll (squawk 0007): a mismatch right after the joins can be
+        # pure view lag rather than a real restore failure — `topology` and
+        # `stop-all` already read each row through a fresh, speaker-owned
+        # view, but a single such read can still land before that speaker's
+        # OWN view has caught up with the just-made group change. Clear the
+        # cache and re-read through `s`'s own view, same as those two
+        # commands, repeating until it matches expected or a short cap
+        # elapses, before recording it as a mismatch. `_retry_transient`
+        # (inside `_read_speaker_row`) still separately retries each
+        # individual volume/mute read against transient network errors.
+        last_exc: Exception | None = None
+        volume = muted = coord_name = None
+        actual_members: list[str] = []
+        matched = False
+        deadline = time.monotonic() + SYNC_VIEW_TIMEOUT_SECONDS
+        while True:
+            try:
+                volume, muted, actual_members, coord_name = _read_speaker_row(s)
+                last_exc = None
+                matched = (
+                    volume == state["volume"]
+                    and muted == state["muted"]
+                    and actual_members == expected_members
+                )
+            except Exception as e:
+                last_exc = e
+                matched = False
+            if matched or time.monotonic() >= deadline:
+                break
+            time.sleep(SYNC_VIEW_POLL_INTERVAL_SECONDS)
+        if last_exc is not None:
             report.append(
-                {"speaker": name, "matched": False, "reason": f"unreadable after retries: {e}"}
+                {"speaker": name, "matched": False, "reason": f"unreadable after retries: {last_exc}"}
             )
             any_unmatched = True
             continue
-        expected_members = expected_group_of.get(name, [name])
-        matched = (
-            volume == state["volume"]
-            and muted == state["muted"]
-            and actual_members == expected_members
-        )
         if not matched:
             any_unmatched = True
         report.append(
