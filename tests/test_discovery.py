@@ -585,6 +585,47 @@ def test_resolve_propagates_no_speakers_found_from_retry_not_speaker_not_found(
 
 
 # ---------------------------------------------------------------------------
+# list_speakers: one speaker's UPnP read failing must not sink the others
+# (squawk 0004)
+# ---------------------------------------------------------------------------
+
+
+class _VolumeRaisingSoCoFake(SoCoFake):
+    """A SoCoFake whose `volume` read raises, like an unreachable speaker."""
+
+    @property
+    def volume(self):
+        raise ConnectionError("[Errno 101] Network is unreachable")
+
+    @volume.setter
+    def volume(self, v):
+        self._volume = int(v)
+
+
+def test_list_speakers_degrades_single_unreachable_speaker(monkeypatch, stub_controller):
+    kitchen = SoCoFake(player_name="Kitchen", uid="RINCON_A", household_id="H1")
+    patio = _VolumeRaisingSoCoFake(
+        player_name="Patio", uid="RINCON_B", household_id="H1", ip_address="192.168.1.52"
+    )
+    monkeypatch.setattr(controller_mod.sp, "discover_speakers", lambda *a, **kw: [kitchen, patio])
+
+    result = stub_controller.list_speakers()
+
+    assert len(result) == 2, "one speaker's read failure must not sink the whole list"
+    kitchen_entry = next(e for e in result if e["name"] == "Kitchen")
+    patio_entry = next(e for e in result if e["name"] == "Patio")
+
+    assert kitchen_entry["volume"] == 40
+    assert "error" not in kitchen_entry
+
+    assert patio_entry["name"] == "Patio"
+    assert patio_entry["ip"] == "192.168.1.52"
+    assert "error" in patio_entry
+    assert "Network is unreachable" in patio_entry["error"]
+    assert "volume" not in patio_entry
+
+
+# ---------------------------------------------------------------------------
 # _invalidate_speakers: cache-clearing contract
 # ---------------------------------------------------------------------------
 

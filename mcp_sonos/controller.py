@@ -194,16 +194,39 @@ class _TargetPlanContext:
 
 
 def _speaker_dict(speaker: SoCo) -> dict:
-    coord = _coordinator_of(speaker)
-    return {
-        "name": speaker.player_name,
-        "ip": speaker.ip_address,
-        "uid": speaker.uid,
-        "is_coordinator": coord.uid == speaker.uid,
-        "coordinator_name": coord.player_name,
-        "volume": speaker.volume,
-        "muted": speaker.mute,
-    }
+    """Per-speaker UPnP reads (volume, mute, coordinator) for `list_speakers`.
+
+    Deliberately guarded: `speaker.ip_address` is a plain attribute set at
+    construction (no network call, see `soco.SoCo.__init__`), but
+    `player_name`, `volume`, `mute`, and `_coordinator_of` all do — or can
+    trigger — UPnP round-trips, and one speaker going unreachable mid-list
+    (dropped off LAN, transient `ConnectionError`/`OSError`) must not sink
+    every other speaker's entry. On any such failure this returns a
+    degraded dict (`name`, `ip`, `error`) instead of raising. `name` is
+    tried too since it's typically already warm from discovery (cached
+    `zone_group_state`), but falls back to the IP if even that raises.
+    """
+    try:
+        coord = _coordinator_of(speaker)
+        return {
+            "name": speaker.player_name,
+            "ip": speaker.ip_address,
+            "uid": speaker.uid,
+            "is_coordinator": coord.uid == speaker.uid,
+            "coordinator_name": coord.player_name,
+            "volume": speaker.volume,
+            "muted": speaker.mute,
+        }
+    except Exception as e:
+        try:
+            name = speaker.player_name
+        except Exception:
+            name = speaker.ip_address
+        return {
+            "name": name,
+            "ip": speaker.ip_address,
+            "error": str(e),
+        }
 
 
 class SonosController:
@@ -1044,6 +1067,17 @@ class SonosController:
             if m_name.casefold() == coord.player_name.casefold():
                 continue
             m = self._resolve(m_name)
+            # Read m's OWN view fresh before deciding whether it needs
+            # peeling off first — a cached view last polled through some
+            # other speaker could under-report its membership. If m
+            # currently coordinates other speakers, join() on it is
+            # unreliable (firmware delegates coordination instead of
+            # moving it) — unjoin it first so the join lands on a
+            # standalone speaker. See squawk 0006.
+            self._sync_view(m)
+            if _coordinator_of(m).uid == m.uid and len(_group_members_of(m)) > 1:
+                m.unjoin()
+                time.sleep(0.3)
             m.join(coord)
             joined.append(m.player_name)
         time.sleep(0.5)  # let topology broadcast settle

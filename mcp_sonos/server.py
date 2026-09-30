@@ -110,7 +110,10 @@ def register_tools(mcp: FastMCP, controller: SonosController) -> None:
         """List every visible Sonos speaker with its IP, group, volume, and mute state.
 
         Raises an explanatory error (naming what was tried and what env
-        vars to set) if no speakers can be found on the LAN.
+        vars to set) if no speakers can be found on the LAN. A speaker that
+        goes unreachable mid-list (dropped off LAN, transient network error)
+        does not fail the whole call — its entry comes back degraded, with
+        only `name`, `ip`, and an `error` string instead of the full fields.
         """
         return controller.list_speakers()
 
