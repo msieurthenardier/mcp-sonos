@@ -75,7 +75,7 @@ async def test_natural_end(client: Client) -> None:
     print("\n\n###### Test 1: natural end across 3 tracks ######")
     await build_playlist(client)
     pp("play", await client.call_tool(
-        "playlist_play", {"speaker": "Kitchen", "name": "smoke"}))
+        "playlist_play", {"speakers": ["Kitchen"], "name": "smoke"}))
     for i in range(7):
         await asyncio.sleep(2.0)
         s = await status(client)
@@ -87,7 +87,7 @@ async def test_natural_end(client: Client) -> None:
 async def test_skip(client: Client) -> None:
     print("\n\n###### Test 2: skip mid-track ######")
     await build_playlist(client)
-    await client.call_tool("playlist_play", {"speaker": "Kitchen", "name": "smoke"})
+    await client.call_tool("playlist_play", {"speakers": ["Kitchen"], "name": "smoke"})
     await asyncio.sleep(1.5)  # let track 1 start
     pp("status before skip", await status(client))
     pp("skip", await client.call_tool("playlist_next", {"speaker": "Kitchen"}))
@@ -99,7 +99,7 @@ async def test_skip(client: Client) -> None:
 async def test_stop(client: Client) -> None:
     print("\n\n###### Test 3: stop mid-track ######")
     await build_playlist(client)
-    await client.call_tool("playlist_play", {"speaker": "Kitchen", "name": "smoke"})
+    await client.call_tool("playlist_play", {"speakers": ["Kitchen"], "name": "smoke"})
     await asyncio.sleep(1.5)
     pp("status before stop", await status(client))
     pp("stop", await client.call_tool("playlist_stop", {"speaker": "Kitchen"}))

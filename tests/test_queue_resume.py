@@ -83,7 +83,7 @@ def test_say_resumes_queue_after_announcement(monkeypatch, stub_controller):
     speaker = _make_speaker_playing_queue(playlist_position="2", play_mode="NORMAL")
     _wire_speaker(monkeypatch, stub_controller, speaker)
 
-    stub_controller.say("Kitchen", "hello")
+    stub_controller.say(["Kitchen"], "hello")
 
     # play_from_queue should have been called with index = playlist_position - 1 = 1
     assert speaker.play_from_queue_last_index == 1, (
@@ -109,7 +109,7 @@ def test_say_resumes_with_non_default_play_mode(monkeypatch, stub_controller):
     )
     _wire_speaker(monkeypatch, stub_controller, speaker)
 
-    stub_controller.say("Kitchen", "shuffle test")
+    stub_controller.say(["Kitchen"], "shuffle test")
 
     assert speaker.play_from_queue_last_index == 0
     assert speaker._play_mode == "SHUFFLE_NOREPEAT"
@@ -135,7 +135,7 @@ def test_play_url_resumes_queue_and_blocks(monkeypatch, stub_controller):
 
     monkeypatch.setattr(SonosController, "_wait_until_stopped", staticmethod(_capturing_wait))
 
-    stub_controller.play_url("Kitchen", "http://example.com/clip.mp3", title="Test clip")
+    stub_controller.play_url(["Kitchen"], "http://example.com/clip.mp3", title="Test clip")
 
     # Must have blocked.
     assert len(wait_called) == 1, "play_url must block via _wait_until_stopped"
@@ -154,13 +154,13 @@ def test_play_url_returns_post_resume_state(monkeypatch, stub_controller):
     speaker = _make_speaker_playing_queue(playlist_position="1")
     _wire_speaker(monkeypatch, stub_controller, speaker)
 
-    result = stub_controller.play_url("Kitchen", "http://example.com/clip.mp3")
+    result = stub_controller.play_url(["Kitchen"], "http://example.com/clip.mp3")
 
     # After play_from_queue the fake sets transport to PLAYING.
     assert result["state"] == "PLAYING"
     # The return dict has the standard fields.
     assert "url" in result
-    assert "played_on_coordinator" in result
+    assert "coordinator" in result
     # Seek called with snapshot position.
     assert speaker.seek_last == "0:01:30"
 
@@ -187,7 +187,7 @@ def test_play_file_inherits_resume(monkeypatch, tmp_path, stub_controller):
         controller_mod.AudioHost, "stage", lambda self, path: "http://test.invalid/staged.mp3"
     )
 
-    stub_controller.play_file("Kitchen", str(audio_file), title="file clip")
+    stub_controller.play_file(["Kitchen"], str(audio_file), title="file clip")
 
     # Queue resume happened (inherits from play_url).
     assert speaker.play_from_queue_last_index == 0
@@ -222,7 +222,7 @@ def test_skip_guard_no_play_from_queue(
     )
     _wire_speaker(monkeypatch, stub_controller, speaker)
 
-    stub_controller.say("Kitchen", "guard test")
+    stub_controller.say(["Kitchen"], "guard test")
 
     assert speaker.play_from_queue_last_index is None, (
         f"should not resume when guard triggered: "
@@ -269,7 +269,7 @@ def test_worker_session_active_skip_no_play_from_queue(monkeypatch, stub_control
     stub_controller.playlists._sessions[speaker.uid] = sess
 
     try:
-        stub_controller.say("Kitchen", "worker session test")
+        stub_controller.say(["Kitchen"], "worker session test")
         assert speaker.play_from_queue_last_index is None, (
             "should not resume when worker session is active"
         )
@@ -313,7 +313,7 @@ def test_say_all_no_resume(monkeypatch, stub_controller):
     # Patch the injectable sleep so the 1.0s topology-settle doesn't cost real time.
     stub_controller._sleep = lambda *_: None
 
-    result = stub_controller.say("all", "test all")
+    result = stub_controller.say(["all"], "test all")
 
     assert result["spoken_on"] == "all"
     # Neither speaker should have had play_from_queue called.
@@ -341,7 +341,7 @@ def test_resume_failure_is_swallowed(monkeypatch, stub_controller):
     speaker.play_from_queue = _always_raise  # type: ignore[method-assign]
 
     # Must not raise.
-    result = stub_controller.say("Kitchen", "swallow test")
+    result = stub_controller.say(["Kitchen"], "swallow test")
 
     assert result["text"] == "swallow test"
 
@@ -359,7 +359,7 @@ def test_seek_called_with_snapshot_position(monkeypatch, stub_controller):
     speaker._track["position"] = "0:02:45"
     _wire_speaker(monkeypatch, stub_controller, speaker)
 
-    stub_controller.say("Kitchen", "mid-track seek test")
+    stub_controller.say(["Kitchen"], "mid-track seek test")
 
     assert speaker.seek_last == "0:02:45", (
         f"expected seek to '0:02:45', got {speaker.seek_last!r}"
@@ -379,7 +379,7 @@ def test_seek_failure_swallowed_resume_still_completes(monkeypatch, stub_control
     speaker.seek_raise = RuntimeError("HTTP range request not supported")
 
     # Must not raise; resume still completes (play_from_queue succeeded).
-    result = stub_controller.say("Kitchen", "seek fail fallback test")
+    result = stub_controller.say(["Kitchen"], "seek fail fallback test")
 
     assert result["text"] == "seek fail fallback test"
     # play_from_queue was called (resume started) — confirms start-of-track fallback.
@@ -397,7 +397,7 @@ def test_seek_skipped_when_position_is_zero(monkeypatch, stub_controller):
     speaker._track["position"] = "0:00:00"
     _wire_speaker(monkeypatch, stub_controller, speaker)
 
-    stub_controller.say("Kitchen", "zero position test")
+    stub_controller.say(["Kitchen"], "zero position test")
 
     # play_from_queue must have happened.
     assert speaker.play_from_queue_last_index == 0

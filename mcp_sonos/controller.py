@@ -12,19 +12,39 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from http.client import RemoteDisconnected
 from pathlib import Path
-from typing import Callable
+from typing import Callable, TypeVar
 
 from soco import SoCo
 
 from . import speakers as sp
+from . import targeting
 from ._extract import extract_audio_urls
 from ._retry import with_stale_coord_retry
 from ._urls import validate_http_url
 from .audio_host import AudioHost
 from .playlists import PlaylistManager
 from .tts import synthesize
+
+
+# Confirmation-poll cap for target-group formation (see `_confirm_final_membership`).
+# Kept small and separate from TTS_TIMEOUT_SECONDS/PLAY_URL_RESUME_TIMEOUT_SECONDS —
+# grouping settles in well under a second on real hardware (measured 2026-09-29:
+# 0.16-0.32s), so 5s is a generous cap, not a tuning knob.
+GROUP_CONFIRM_TIMEOUT_SECONDS = 5.0
+GROUP_CONFIRM_POLL_INTERVAL_SECONDS = 0.1
+
+# Cap for `_sync_view(..., expect_coordinator=True)`'s resync-and-retry poll
+# (leg 4, coordinator-view hardening). Topology views are per-speaker and
+# eventually consistent — see the CLAUDE.md grouping invariant. On hardware
+# a genuine view-lag clears within SoCo's own 5s ZGS cache window, so 3s is
+# a generous-but-bounded cap, not a tuning knob.
+SYNC_VIEW_TIMEOUT_SECONDS = 3.0
+SYNC_VIEW_POLL_INTERVAL_SECONDS = 0.1
+
+_T = TypeVar("_T")
 
 
 # How long a single TTS clip is allowed to play before we give up
@@ -118,6 +138,61 @@ def _group_members_of(speaker: SoCo) -> list[str]:
     return [speaker.player_name]
 
 
+def _group_member_uids_of(speaker: SoCo) -> list[str]:
+    """Same guarded shape as `_group_members_of`, but UIDs instead of names.
+
+    Used by the target-group planner/executor, which needs stable
+    identifiers rather than display names. Any new code that reads
+    `speaker.group.members` must go through one of these two helpers, per
+    the CLAUDE.md invariant — never `.group.members` directly.
+    """
+    try:
+        if speaker.group and speaker.group.members:
+            return sorted(m.uid for m in speaker.group.members)
+    except Exception:
+        pass
+    return [speaker.uid]
+
+
+class GroupingError(RuntimeError):
+    """Raised when forming a target group fails mid-execution, or its
+    resulting topology can't be confirmed within the poll cap.
+
+    No rollback is attempted: because the executor stops bystanders before
+    unjoining or joining anyone, a mid-sequence failure leaves at most
+    silence and partial grouping — never a bystander left playing target
+    audio. The message names the failing step, the requested target names,
+    and a cache-cleared snapshot of the observed topology of every speaker
+    the plan touched, so the caller (agent) can decide whether to retry.
+    """
+
+
+@dataclass
+class TargetGroup:
+    """Result of executing a `targeting.TargetPlan`."""
+
+    coordinator: str
+    members: list[str]
+    stopped: list[str]
+    detached: bool
+
+
+@dataclass
+class _TargetPlanContext:
+    """Everything `_execute_plan` needs, produced by `_plan_targets`.
+
+    Read-only from the caller's perspective (nothing here has been mutated
+    on the household yet) — `_execute_plan` is the only place that issues
+    stop/unjoin/join calls.
+    """
+
+    plan: targeting.TargetPlan
+    speakers_by_uid: dict[str, SoCo]
+    target_names: list[str]
+    c0: SoCo
+    detach: bool
+
+
 def _speaker_dict(speaker: SoCo) -> dict:
     coord = _coordinator_of(speaker)
     return {
@@ -187,8 +262,21 @@ class SonosController:
         intermittently see stale topology.
         """
         self._speakers_ts = 0.0
+        self._clear_socos_zgs_cache(self._speakers)
+
+    @staticmethod
+    def _clear_socos_zgs_cache(speakers: list[SoCo]) -> None:
+        """Clear SoCo's per-household `ZoneGroupState` cache, once per
+        household, for every speaker in `speakers`.
+
+        Extracted from `_invalidate_speakers` so `_plan_targets` can clear
+        SoCo's topology cache before every snapshot WITHOUT also zeroing
+        our own 30s discovery TTL (`_speakers_ts`) — the target-group
+        planner needs a guaranteed-fresh `ZoneGroupState` read on every
+        call, not a forced re-discovery.
+        """
         seen_households: set[str] = set()
-        for s in self._speakers:
+        for s in speakers:
             try:
                 household = s.household_id
             except Exception:
@@ -200,6 +288,73 @@ class SonosController:
                 s.zone_group_state.clear_cache()
             except Exception:
                 continue
+
+    def _sync_view(self, speaker: SoCo, *, expect_coordinator: bool = False) -> None:
+        """Force the next topology read touching `speaker` to come from
+        `speaker`'s OWN `ZoneGroupState` view — not a cached view SoCo last
+        polled through some other (possibly lagging) speaker.
+
+        Topology views are per-speaker and eventually consistent; SoCo
+        caches whichever speaker it last polled, per household, for 5s
+        (see the CLAUDE.md grouping invariant this leg adds). Reading
+        `speaker.is_coordinator` after clearing the cache is what forces
+        the fresh poll: it calls `zone_group_state.poll(speaker)`, i.e. a
+        `GetZoneGroupState` request made TO `speaker` itself — see
+        `soco/core.py:is_coordinator` and `soco/zonegroupstate.py:poll`.
+
+        With `expect_coordinator=True`, re-polls (via `self._sleep`, never
+        a raw `time.sleep`, so tests can no-op it) every
+        `SYNC_VIEW_POLL_INTERVAL_SECONDS` up to `SYNC_VIEW_TIMEOUT_SECONDS`
+        until `speaker.is_coordinator` reports True. Raises `GroupingError`,
+        naming the view lag, if it never does within the cap.
+        """
+        self._clear_socos_zgs_cache([speaker])
+        if speaker.is_coordinator or not expect_coordinator:
+            return
+        deadline = time.monotonic() + SYNC_VIEW_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            self._sleep(SYNC_VIEW_POLL_INTERVAL_SECONDS)
+            self._clear_socos_zgs_cache([speaker])
+            if speaker.is_coordinator:
+                return
+        raise GroupingError(
+            f"{speaker.player_name!r}'s own topology view never reported "
+            f"it as coordinator within {SYNC_VIEW_TIMEOUT_SECONDS}s "
+            "(topology view lag)."
+        )
+
+    def _on_coordinator(self, c0: SoCo, action: Callable[[SoCo], _T]) -> _T:
+        """Run a coordinator-only `action(c0)`, recovering once from a
+        stale topology view.
+
+        On `SoCoSlaveException`, forces a resync from `c0`'s own view
+        (`_sync_view(c0, expect_coordinator=True)` — which itself raises
+        `GroupingError` if `c0`'s view never catches up within the cap),
+        then retries `action(c0)` exactly once. If the retry ALSO raises
+        `SoCoSlaveException`, wraps it as `GroupingError` rather than
+        letting the raw SoCo exception escape — callers (e.g. `play_stream`)
+        rely on `GroupingError` being the one exception type a coordinator-
+        view failure surfaces as.
+
+        Use for any coordinator-only call that follows a topology read
+        which may have gone through a different, possibly lagging, speaker
+        — `play_stream`'s `stop`/`play_uri`, `play_url`'s `play_uri`. NOT
+        used by `say()`, which keeps its own `with_stale_coord_retry`
+        (unbounded-wait, invalidate-and-re-resolve) — see CLAUDE.md.
+        """
+        from soco.exceptions import SoCoSlaveException
+
+        try:
+            return action(c0)
+        except SoCoSlaveException:
+            self._sync_view(c0, expect_coordinator=True)
+            try:
+                return action(c0)
+            except SoCoSlaveException as e2:
+                raise GroupingError(
+                    f"{c0.player_name!r} still raised a coordinator-only "
+                    f"error after a topology-view resync: {e2}"
+                ) from e2
 
     def refresh(self) -> list[dict]:
         """Force a fresh discovery, bypassing both cache layers.
@@ -240,6 +395,232 @@ class SonosController:
         s = self._resolve(name)
         return s, _coordinator_of(s)
 
+    # ---- target-group planning / execution -----------------------------------
+    #
+    # The pure planning logic lives in `targeting.py` (`plan_target_group`);
+    # everything here is the I/O half — name resolution, topology snapshot,
+    # and issuing/confirming the mutations. See flight 2's design decisions
+    # ("Detach algorithm", "Coordinator choice", "Plan / execute split
+    # around queue resume", "Topology confirmation", "Partial failure").
+
+    def _snapshot_topology(
+        self, speakers_now: list[SoCo]
+    ) -> tuple[list[targeting.GroupInfo], dict[str, SoCo]]:
+        """Build a `targeting.GroupInfo` list plus a uid->SoCo map from the
+        CURRENT live topology. Always goes through `_coordinator_of` /
+        `_group_member_uids_of`, per the CLAUDE.md invariant."""
+        groups: dict[str, targeting.GroupInfo] = {}
+        speakers_by_uid: dict[str, SoCo] = {}
+        for s in speakers_now:
+            speakers_by_uid[s.uid] = s
+            coord = _coordinator_of(s)
+            speakers_by_uid.setdefault(coord.uid, coord)
+            if coord.uid not in groups:
+                try:
+                    state = coord.get_current_transport_info().get("current_transport_state")
+                except Exception:
+                    state = None
+                member_uids = tuple(_group_member_uids_of(coord))
+                groups[coord.uid] = targeting.GroupInfo(coord.uid, member_uids, state)
+        return list(groups.values()), speakers_by_uid
+
+    def _plan_targets(self, names: list[str], *, detach: bool) -> _TargetPlanContext:
+        """Resolve `names`, snapshot the live topology, and plan a target
+        group. Read-only — no stop/unjoin/join is issued here.
+
+        Raises `ValueError` for an empty or "all"-containing `names` list
+        (only `say()` special-cases the `["all"]` sentinel, before ever
+        calling this), `SpeakerNotFound` for an unresolvable name (no side
+        effects), and lets `NoSpeakersFound` propagate unwrapped.
+        """
+        if not names:
+            raise ValueError("at least one speaker is required")
+        if any(n.strip().casefold() == "all" for n in names):
+            raise ValueError(
+                "'all' is only supported by say(); pass explicit speaker "
+                "names to this tool, or call list_speakers to enumerate them."
+            )
+
+        resolved: list[SoCo] = []
+        seen_uids: set[str] = set()
+        for n in names:
+            s = self._resolve(n)
+            if s.uid not in seen_uids:
+                seen_uids.add(s.uid)
+                resolved.append(s)
+
+        # Unconditionally clear SoCo's own ZGS cache before snapshotting —
+        # see `_clear_socos_zgs_cache`'s docstring. A regroup made moments
+        # ago (Sonos app, another call) must never feed the planner stale
+        # topology.
+        self._clear_socos_zgs_cache(self._speakers)
+        speakers_now = self._speakers_fresh()
+        topology, speakers_by_uid = self._snapshot_topology(speakers_now)
+        for s in resolved:
+            speakers_by_uid.setdefault(s.uid, s)
+
+        target_uids = [s.uid for s in resolved]
+        plan = targeting.plan_target_group(topology, target_uids, detach=detach)
+        c0 = speakers_by_uid[plan.coordinator_uid]
+        return _TargetPlanContext(
+            plan=plan,
+            speakers_by_uid=speakers_by_uid,
+            target_names=[s.player_name for s in resolved],
+            c0=c0,
+            detach=detach,
+        )
+
+    def _execute_plan(self, ctx: _TargetPlanContext) -> TargetGroup:
+        """Issue `ctx.plan`'s stops, then unjoins, then joins, then confirm.
+
+        Raises `GroupingError` on a mid-execution exception or a
+        confirmation timeout. No rollback (see `GroupingError`'s docstring).
+        """
+        from soco.exceptions import SoCoSlaveException
+
+        plan = ctx.plan
+        by_uid = ctx.speakers_by_uid
+        try:
+            for uid in plan.stop:
+                coord = by_uid[uid]
+                # Force this stop's coordinator-only call to see a FRESH
+                # view of ITSELF first — a stale cached view (last polled
+                # through some other speaker) is exactly the class of bug
+                # the leg 3 hardware run hit (see CLAUDE.md's per-speaker
+                # view-lag grouping invariant). If it still raises after
+                # that, resync-and-retry once before letting it become a
+                # GroupingError via the `except Exception` below.
+                self._sync_view(coord)
+                try:
+                    coord.stop()
+                except SoCoSlaveException:
+                    self._sync_view(coord, expect_coordinator=True)
+                    coord.stop()
+            for uid in plan.unjoin:
+                by_uid[uid].unjoin()
+            c0 = by_uid[plan.coordinator_uid]
+            for uid in plan.join:
+                by_uid[uid].join(c0)
+        except Exception as e:
+            raise self._grouping_error("mutation", ctx, str(e)) from e
+
+        if not plan.fast_path:
+            self._confirm_final_membership(ctx)
+        self._confirm_bystanders_stopped(ctx)
+
+        c0 = by_uid[plan.coordinator_uid]
+        # The LAST poll before building the response — and before any
+        # further coordinator-only call the caller makes on c0 — MUST come
+        # from c0's own view. `_confirm_bystanders_stopped`'s last read goes
+        # THROUGH each bystander, which can leave SoCo's shared 5s cache
+        # holding a lagging bystander's stale view of c0 (the leg 3
+        # hardware bug). Re-sync from c0 itself, unconditionally — even on
+        # the fast path with no mutations and no bystanders, the cache may
+        # still hold another speaker's view from `_plan_targets`' snapshot
+        # — and only then read `group_members` from it.
+        self._sync_view(c0, expect_coordinator=True)
+        stopped_names = [
+            by_uid[uid].player_name for uid in plan.bystanders if uid in by_uid
+        ]
+        return TargetGroup(
+            coordinator=c0.player_name,
+            members=_group_members_of(c0),
+            stopped=stopped_names,
+            detached=ctx.detach,
+        )
+
+    def _confirm_final_membership(self, ctx: _TargetPlanContext) -> None:
+        """Poll (never sleep-and-hope) until `ctx.c0`'s group equals
+        `plan.final_members` — the flight's "planned membership", which for
+        a `detach=False` merge is a superset of the target set. Clears
+        SoCo's ZGS cache before every read (its own 5s cache would
+        otherwise mask a just-issued join/unjoin)."""
+        plan = ctx.plan
+        c0 = ctx.speakers_by_uid[plan.coordinator_uid]
+        expected = set(plan.final_members)
+        deadline = time.monotonic() + GROUP_CONFIRM_TIMEOUT_SECONDS
+        while True:
+            self._clear_socos_zgs_cache(self._speakers)
+            current = set(_group_member_uids_of(c0))
+            if current == expected:
+                return
+            if time.monotonic() >= deadline:
+                raise self._grouping_error(
+                    "confirmation",
+                    ctx,
+                    f"timed out waiting for group membership {sorted(expected)}; "
+                    f"last observed {sorted(current)}",
+                )
+            self._sleep(GROUP_CONFIRM_POLL_INTERVAL_SECONDS)
+
+    def _confirm_bystanders_stopped(self, ctx: _TargetPlanContext) -> None:
+        """Cheap insurance against a delegate handoff resuming playback: read
+        each bystander's CURRENT coordinator transport state once
+        (cache-cleared) and raise if any is PLAYING."""
+        plan = ctx.plan
+        if not plan.bystanders:
+            return
+        self._clear_socos_zgs_cache(self._speakers)
+        for uid in plan.bystanders:
+            s = ctx.speakers_by_uid.get(uid)
+            if s is None:
+                continue
+            coord = _coordinator_of(s)
+            try:
+                state = coord.get_current_transport_info().get("current_transport_state")
+            except Exception:
+                state = None
+            if state == "PLAYING":
+                raise self._grouping_error(
+                    "bystander-confirmation",
+                    ctx,
+                    f"bystander {s.player_name!r}'s coordinator "
+                    f"{coord.player_name!r} is still PLAYING",
+                )
+
+    def _grouping_error(self, step: str, ctx: _TargetPlanContext, detail: str) -> GroupingError:
+        # Deliberately NO `_sync_view(c0, expect_coordinator=True)` here,
+        # unlike the success path in `_execute_plan`: a `GroupingError`
+        # always aborts the caller (raised straight through `play_url` /
+        # `play_stream` / `playlist_play`; `_execute_plan`'s own callers
+        # never issue another coordinator-only call on this ctx afterwards),
+        # so there is no subsequent call a stale view could break. The
+        # clear-cache-then-read below is diagnostic only, best-effort, and
+        # reads whatever view happens to be cached after clearing it once —
+        # it does not attempt to resolve per-speaker view lag.
+        self._clear_socos_zgs_cache(self._speakers)
+        involved_uids = (
+            list(ctx.plan.stop)
+            + list(ctx.plan.unjoin)
+            + list(ctx.plan.join)
+            + list(ctx.plan.bystanders)
+            + [ctx.plan.coordinator_uid]
+        )
+        seen: set[str] = set()
+        observed: list[dict] = []
+        for uid in involved_uids:
+            if uid in seen:
+                continue
+            seen.add(uid)
+            s = ctx.speakers_by_uid.get(uid)
+            if s is None:
+                continue
+            try:
+                coord = _coordinator_of(s)
+                observed.append(
+                    {
+                        "speaker": s.player_name,
+                        "coordinator": coord.player_name,
+                        "group_members": _group_members_of(coord),
+                    }
+                )
+            except Exception:
+                continue
+        return GroupingError(
+            f"target-group {step} failed for targets {ctx.target_names}: {detail}. "
+            f"Observed topology: {observed}"
+        )
+
     # ---- queries ------------------------------------------------------------
 
     def now_playing(self, name: str) -> dict:
@@ -267,43 +648,76 @@ class SonosController:
 
     # ---- transport ----------------------------------------------------------
 
-    def play_url(self, name: str, url: str, title: str | None = None) -> dict:
-        """Play any HTTP URL on the speaker's group coordinator.
+    def play_url(
+        self,
+        speakers: list[str],
+        url: str,
+        title: str | None = None,
+        *,
+        detach: bool = True,
+    ) -> dict:
+        """Play any HTTP URL on a target set of speakers, grouped together.
 
-        Blocking contract (changed in Leg 4): this method now BLOCKS until
-        the clip finishes (or PLAY_URL_RESUME_TIMEOUT_SECONDS elapses), then
-        attempts to resume a native-queue session that was active before the
-        clip started.  If the queue was playing, playback resumes mid-track
-        (best-effort; falls back to start-of-track if the host rejects the
-        seek); return value reflects the post-resume state (queue track, not
-        the clip).
+        By default (``detach=True``) the targets are detached from any
+        existing groups and grouped only with each other; bystanders left
+        behind are stopped. Pass ``detach=False`` to keep today's per-group
+        behavior instead (each target's existing group plays, merged
+        together if the targets span more than one group). See the flight's
+        "Detach algorithm" / "Opt-out semantics" design decisions.
 
-        Resume is best-effort: if the coordinator becomes unreachable while
-        the clip is playing (e.g. MCP is reaped and restarted), the clip
-        still plays but the queue resume is silently skipped.
+        Blocking contract (changed in Leg 4): this method BLOCKS until the
+        clip finishes (or PLAY_URL_RESUME_TIMEOUT_SECONDS elapses), then
+        attempts to resume a native-queue session that was active on the
+        chosen coordinator before the clip started (best-effort; see
+        `_with_queue_resume`). Return value reflects the post-resume state.
 
         play_file() inherits this behaviour because it calls play_url().
         """
         # Defence in depth: the MCP tool surface already validates, but
         # direct/test callers reach this method without that gate.
         validate_http_url(url)
-        s, coord = self._resolve_coordinator(name)
+        ctx = self._plan_targets(speakers, detach=detach)
+        c0 = ctx.c0
+        result_box: list[TargetGroup] = []
+
+        def _run() -> None:
+            result_box.append(self._execute_plan(ctx))
+            by_uid = ctx.speakers_by_uid
+            coord = by_uid[ctx.plan.coordinator_uid]
+            self._on_coordinator(
+                coord, lambda c: c.play_uri(url, title=title or "MCP playback")
+            )
+
         self._with_queue_resume(
-            coord,
-            s.uid,  # keyed on the NAMED speaker's UID, matching _sessions
-            lambda: coord.play_uri(url, title=title or "MCP playback"),
+            c0,
+            c0.uid,
+            _run,
             timeout=PLAY_URL_RESUME_TIMEOUT_SECONDS,
         )
+        group = result_box[0]
+        coord = ctx.speakers_by_uid[ctx.plan.coordinator_uid]
         return {
-            "requested": s.player_name,
-            "played_on_coordinator": coord.player_name,
-            "group_members": _group_members_of(coord),
+            "targets": ctx.target_names,
+            "coordinator": group.coordinator,
+            "group_members": group.members,
+            "stopped": group.stopped,
+            "detached": group.detached,
             "url": url,
             **_track_state(coord),
         }
 
-    def play_stream(self, name: str, url: str, title: str | None = None) -> dict:
-        """Play a live radio stream (endless) on a speaker — non-blocking.
+    def play_stream(
+        self,
+        speakers: list[str],
+        url: str,
+        title: str | None = None,
+        *,
+        detach: bool = True,
+    ) -> dict:
+        """Play a live radio stream (endless) on a target set — non-blocking.
+
+        Forms the target group first (see `play_url`'s `detach` semantics —
+        identical here), then starts the stream on the chosen coordinator.
 
         Unlike ``play_url`` (which is for finite clips and BLOCKS until the
         clip ends), this is for never-ending Icecast/Shoutcast-style streams.
@@ -316,10 +730,20 @@ class SonosController:
         plain first, confirm the transport actually reaches PLAYING, and fall
         back to the radio scheme (with a short retry for the transient
         701 ``Transition not available``) otherwise. Raises RuntimeError if
-        neither scheme sustains playback.
+        neither scheme sustains playback (a genuine scheme rejection or a
+        stall to STOPPED — see the "incompatible" wording below).
+
+        A coordinator-view failure (leg 4) is a DIFFERENT exception: `stop`
+        and `play_uri` here run through `_on_coordinator`, which retries once
+        after a forced resync and, if that still fails, raises
+        `GroupingError`. That propagates immediately — no scheme fallback,
+        no "may be incompatible" wording — because the failure has nothing
+        to do with the speaker's codec/format support.
         """
         validate_http_url(url)
-        s, coord = self._resolve_coordinator(name)
+        ctx = self._plan_targets(speakers, detach=detach)
+        group = self._execute_plan(ctx)
+        coord = ctx.speakers_by_uid[ctx.plan.coordinator_uid]
         attempts = (("plain", url), ("radio", "x-rincon-mp3radio://" + url))
         last_reason = ""
         for label, uri in attempts:
@@ -327,16 +751,22 @@ class SonosController:
             # is almost always residual state from a just-prior stop/play. Give
             # the coordinator a moment to settle before driving it.
             try:
-                coord.stop()
+                self._on_coordinator(coord, lambda c: c.stop())
+            except GroupingError:
+                raise
             except Exception:
                 pass
             self._sleep(1.5)
             started = False
             for _ in range(3):  # transient 701 retry (radio scheme esp.)
                 try:
-                    coord.play_uri(uri, title=title or "Live stream")
+                    self._on_coordinator(
+                        coord, lambda c: c.play_uri(uri, title=title or "Live stream")
+                    )
                     started = True
                     break
+                except GroupingError:
+                    raise
                 except Exception as e:
                     last_reason = str(e)
                     if "701" in last_reason:
@@ -353,9 +783,11 @@ class SonosController:
                 )
                 if state == "PLAYING":
                     return {
-                        "requested": s.player_name,
-                        "played_on_coordinator": coord.player_name,
-                        "group_members": _group_members_of(coord),
+                        "targets": ctx.target_names,
+                        "coordinator": group.coordinator,
+                        "group_members": group.members,
+                        "stopped": group.stopped,
+                        "detached": group.detached,
                         "url": url,
                         "scheme": label,
                         **_track_state(coord),
@@ -364,7 +796,7 @@ class SonosController:
                     last_reason = f"{label} scheme stalled to STOPPED"
                     break
         raise RuntimeError(
-            f"Could not start stream {url} on {s.player_name}: {last_reason}. "
+            f"Could not start stream {url} on {group.coordinator}: {last_reason}. "
             "The stream may be incompatible with this speaker model."
         )
 
@@ -375,7 +807,9 @@ class SonosController:
         limit: int = 5,
         offset: int = 0,
         shuffle: bool = False,
-        speaker: str | None = None,
+        speakers: list[str] | None = None,
+        *,
+        detach: bool = True,
     ) -> dict:
         """Build a named playlist from audio links found on a web page.
 
@@ -389,11 +823,22 @@ class SonosController:
         matches, then take ``limit``). ``shuffle=True`` instead loads a random
         sample of ``limit`` links from anywhere on the page (``offset`` ignored).
 
-        If ``speaker`` is given, playback is started on that speaker right away
-        (equivalent to a follow-up ``playlist_play``) — a one-call build+play so
-        a small-context agent doesn't have to chain two tools. When ``speaker``
-        is omitted the playlist is only built; start it later with
-        ``playlist_play``.
+        If ``speakers`` is given, playback is started on that target set
+        right away — equivalent to a follow-up ``playlist_play`` — through
+        the exact same target-group path (see ``playlist_play`` for the
+        ``detach`` contract). The response gains the target-set keys
+        (``targets``, ``coordinator``, ``group_members``, ``stopped``,
+        ``detached``) plus ``engine`` in that case. When ``speakers`` is
+        omitted (``None``) the playlist is only built, as before; start it
+        later with ``playlist_play``.
+
+        An explicit ``speakers=[]`` is NOT treated the same as omitted — it
+        is rejected with the same ``ValueError`` every other target-set
+        tool raises for an empty target list (via ``_plan_targets``,
+        through ``playlist_play``), for consistency with ``play_url`` /
+        ``play_stream`` / ``say``. The playlist itself is still built
+        before that error is raised (creation is unconditional; only the
+        optional play step can fail this way).
 
         Raises RuntimeError if no audio links are found (or ``offset`` is past
         the last link).
@@ -419,17 +864,88 @@ class SonosController:
             "selection": "random" if shuffle else f"page-order[{offset}:{offset + limit}]",
             "titles": [it["title"] for it in items],
         }
-        if speaker:
-            play = self.playlists.play(speaker, playlist)
+        if speakers is not None:
+            play = self.playlist_play(speakers, playlist, detach=detach)
             result["playing"] = True
-            result["speaker"] = play.get("speaker", speaker)
-            result["engine"] = play.get("engine")
+            result.update(play)
         else:
             result["playing"] = False
         return result
 
-    def play_file(self, name: str, path: str, title: str | None = None) -> dict:
-        """Play a local file (path on the MCP host) by staging it to audio host."""
+    def playlist_play(
+        self,
+        speakers: list[str],
+        name: str,
+        *,
+        shuffle: bool = False,
+        start_index: int = 0,
+        detach: bool = True,
+    ) -> dict:
+        """Start continuous playback of a named playlist on a target set.
+
+        Forms the target group first — same ``detach`` contract as
+        ``play_url``/``say``: by default the targets are detached from any
+        existing groups and grouped only with each other, and any
+        bystander left behind is stopped. See ``play_url``'s docstring and
+        the flight's "Detach algorithm" / "Opt-out semantics" design
+        decisions for the full algorithm; ``"all"`` is rejected here too
+        (only ``say`` accepts it).
+
+        Unlike ``play_url``/``say``, this calls ``_plan_targets`` then
+        ``_execute_plan`` directly — no queue-resume wrapper. A playlist
+        call always starts a NEW playback session rather than resuming an
+        old one, so there is nothing to snapshot (flight 2's "Playlist
+        sessions" design decision).
+
+        The playlist engine is started on ``c0`` (the chosen coordinator),
+        via ``self.playlists.play(c0.player_name, ...)``. Passing ``c0``'s
+        own player name makes it the playlist engine's "named speaker",
+        which keys the worker session on ``c0``'s UID — preserving the
+        speaker-UID session-keying invariant (see CLAUDE.md's "Session
+        keying" section) now that the "named speaker" may be a coordinator
+        chosen from among several targets rather than the sole speaker the
+        agent asked for.
+
+        Response shape: the engine's own dict — which includes ``engine``
+        and, per-engine, a ``speaker`` key — merged with the target-set
+        keys ``targets``, ``coordinator``, ``group_members``, ``stopped``,
+        ``detached``. ``speaker`` and ``coordinator`` end up holding the
+        SAME value here (``c0``'s player name) precisely because ``c0`` is
+        both the resolved target-group coordinator and the playlist
+        engine's named speaker — both keys are kept rather than merged,
+        since ``speaker`` is the engine response's own established key
+        (also used by ``playlist_next``/``previous``/``stop``/``status``)
+        and ``coordinator`` is the target-set contract's key shared by
+        every audio tool.
+        """
+        ctx = self._plan_targets(speakers, detach=detach)
+        group = self._execute_plan(ctx)
+        c0 = ctx.speakers_by_uid[ctx.plan.coordinator_uid]
+        engine_result = self.playlists.play(
+            c0.player_name, name, shuffle=shuffle, start_index=start_index
+        )
+        return {
+            **engine_result,
+            "targets": ctx.target_names,
+            "coordinator": group.coordinator,
+            "group_members": group.members,
+            "stopped": group.stopped,
+            "detached": group.detached,
+        }
+
+    def play_file(
+        self,
+        speakers: list[str],
+        path: str,
+        title: str | None = None,
+        *,
+        detach: bool = True,
+    ) -> dict:
+        """Play a local file (path on the MCP host) by staging it to audio host.
+
+        Delegates to `play_url`, so the target-set/`detach` contract and
+        queue-resume behavior are identical — see `play_url`.
+        """
         if self.media_root is None:
             raise ValueError("play_file is disabled; set AUDIO_MEDIA_ROOT to enable")
         if not self.media_root.is_dir():
@@ -442,7 +958,7 @@ class SonosController:
         if target.suffix.lower() not in {".mp3", ".wav", ".flac", ".m4a", ".ogg"}:
             raise ValueError(f"unsupported extension {target.suffix!r}; allowed: mp3/wav/flac/m4a/ogg")
         url = self.audio.stage(target)
-        result = self.play_url(name, url, title=title or target.name)
+        result = self.play_url(speakers, url, title=title or target.name, detach=detach)
         result["staged_file"] = str(target)
         return result
 
@@ -575,58 +1091,86 @@ class SonosController:
 
     def say(
         self,
-        target: str,
+        speakers: list[str],
         text: str,
         *,
         volume: int | None = None,
         lang: str = "en",
+        detach: bool = True,
     ) -> dict:
-        """Speak `text` on a speaker or on "all" (synced across all speakers).
+        """Speak `text` on a target set of speakers, or on ["all"] for a
+        synchronized whole-house broadcast (unchanged from before).
+
+        By default (`detach=True`) the targets are detached from any
+        existing groups and grouped only with each other; bystanders left
+        behind are stopped. Pass `detach=False` to keep each target's
+        existing group instead (merged together if the targets span more
+        than one group). `detach` is ignored for `speakers=["all"]` — that
+        broadcast is already whole-house. `speakers=["all"]` mixed with any
+        other name raises `ValueError`; `"all"` is not accepted by any
+        other audio tool.
 
         Blocks until playback finishes (or hits TTS_TIMEOUT_SECONDS).
         """
         if not text.strip():
             raise ValueError("text is empty")
+        if not speakers:
+            raise ValueError("at least one speaker is required")
+
+        if len(speakers) == 1 and speakers[0].strip().casefold() == "all":
+            mp3 = synthesize(text, self.cache_dir, lang=lang)
+            url = self.audio.url_for(mp3.name)
+            return self._say_all(text, url, volume=volume)
+        if any(name.strip().casefold() == "all" for name in speakers):
+            raise ValueError(
+                "'all' cannot be combined with other speaker names; call "
+                "say(['all'], ...) alone for a whole-house announcement."
+            )
 
         mp3 = synthesize(text, self.cache_dir, lang=lang)
         url = self.audio.url_for(mp3.name)
 
-        if target.strip().casefold() == "all":
-            return self._say_all(text, url, volume=volume)
+        ctx = self._plan_targets(speakers, detach=detach)
+        c0 = ctx.c0
+        # Captured before any mutation, per the flight's spec: the
+        # stale-coordinator retry re-resolves the PLANNED coordinator by its
+        # player name, not the caller's original target list.
+        planned_coord_name = c0.player_name
 
-        s, coord = self._resolve_coordinator(target)
         if volume is not None:
-            member_names = _group_members_of(coord)
-            members = [self._resolve(n) for n in member_names]
-            for m in members:
-                m.volume = volume
+            # Exactly `final_members`: pulled-in non-targets (detach=False
+            # merges) get it because they're playing; stopped bystanders
+            # never do.
+            for uid in ctx.plan.final_members:
+                m = ctx.speakers_by_uid.get(uid)
+                if m is not None:
+                    m.volume = volume
 
-        # NOTE: coord_holder is a mutable single-cell list box. Python closures
-        # capture variable names, not values, so a plain `coord = ...` inside
-        # `_play_clip` would only update a local variable invisible to the
-        # outer scope. By boxing `coord` in a one-element list, the inner
-        # function can hand back a replaced coordinator (from the stale-coord
-        # retry) and the outer scope picks it up via `coord_holder[0]`.
-        coord_holder: list[SoCo] = [coord]
+        result_box: list[TargetGroup] = []
 
         def _play_clip() -> None:
-            coord_holder[0] = with_stale_coord_retry(
-                coord=coord_holder[0],
+            result_box.append(self._execute_plan(ctx))
+            current_c0 = ctx.speakers_by_uid[ctx.plan.coordinator_uid]
+            with_stale_coord_retry(
+                coord=current_c0,
                 action=lambda c: c.play_uri(url, title=f"Say: {text[:40]}"),
                 invalidate=self._invalidate_speakers,
-                resolve=lambda: self._resolve_coordinator(target)[1],
+                resolve=lambda: self._resolve_coordinator(planned_coord_name)[1],
             )
 
         self._with_queue_resume(
-            coord_holder[0],
-            s.uid,  # keyed on the NAMED speaker's UID, matching _sessions
+            c0,
+            c0.uid,
             _play_clip,
             timeout=TTS_TIMEOUT_SECONDS,
         )
-        coord = coord_holder[0]
+        group = result_box[0]
         return {
-            "spoken_on": coord.player_name,
-            "group_members": _group_members_of(coord),
+            "targets": ctx.target_names,
+            "coordinator": group.coordinator,
+            "group_members": group.members,
+            "stopped": group.stopped,
+            "detached": group.detached,
             "text": text,
         }
 

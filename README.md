@@ -11,7 +11,7 @@ own music and speak on your speakers.
 
 ## What it does
 
-35 MCP tools:
+MCP tools, grouped by area:
 
 | group | tools |
 |---|---|
@@ -20,7 +20,7 @@ own music and speak on your speakers.
 | volume | `set_volume`, `mute`, `unmute` |
 | maintenance | `reboot` |
 | grouping | `group`, `ungroup`, `partymode`, `dissolve_all_groups` |
-| TTS | `say` (target=`"all"` for synced broadcast across every speaker) |
+| TTS | `say` (`speakers=["all"]` for synced broadcast across every speaker) |
 | playlists | `playlist_create`, `playlist_delete`, `playlist_clear`, `playlist_add`, `playlist_add_many`, `playlist_from_page`, `playlist_remove`, `playlist_get`, `playlist_list`, `playlist_play`, `playlist_next`, `playlist_previous`, `playlist_stop`, `playlist_status` |
 
 `play_stream` is for never-ending live radio (Icecast/Shoutcast): it
@@ -28,13 +28,27 @@ returns immediately and handles per-model scheme differences (plain `http`
 vs `x-rincon-mp3radio://`), unlike `play_url`, which is for finite clips
 and blocks until they end. `playlist_from_page` fetches a web page
 server-side, extracts its direct `.mp3` links, and loads them into a
-playlist (optionally starting playback via a `speaker` arg) — so an agent
-can play a music blog from just the page URL; `offset`/`shuffle` page
-through or randomize the selection.
+playlist (optionally starting playback on a target set via a `speakers`
+arg) — so an agent can play a music blog from just the page URL;
+`offset`/`shuffle` page through or randomize the selection.
 
-Speakers are addressed by name (case-insensitive). Transport commands
-auto-route to the group coordinator; responses include `group_members`
-so the agent always sees what got affected.
+Speakers are addressed by name (case-insensitive). Every audio-sending
+tool — `play_url`, `play_file`, `play_stream`, `say`, `playlist_play`,
+and `playlist_from_page` (when given `speakers`) — takes
+`speakers: list[str]` (one or more names) plus `detach: bool = True`:
+by default the named speakers are detached from whatever they were
+grouped with, grouped only with each other, and any bystander left
+behind (grouped with a target but not itself one) is stopped. Pass
+`detach=false` to keep each target's existing group instead (merged
+together if the targets span more than one group). Responses include
+`targets`, `coordinator`, `group_members`, `stopped`, and `detached` so
+the agent always sees exactly what got affected. Control tools
+(`pause`, `stop`, `set_volume`, `playlist_next`/`previous`/`stop`/
+`status`, etc.) remain single-speaker, addressed by `speaker: str`, and
+always act on the resolved group coordinator — for the playlist control
+tools, "resolved" includes a fallback to the session on that speaker's
+current coordinator, so naming any member of the group `playlist_play`
+formed works, not just the coordinator it returned.
 
 `playlist_play` uses **two engines** depending on URL type: all-external
 URLs → native Sonos queue (survives MCP restart/reap, speaker advances
@@ -343,60 +357,89 @@ no Sonos cloud involved.
 ## Tools at your disposal
 
 - Discovery: `list_speakers`, `list_groups`, `refresh_speakers`, `now_playing`
-- Playback: `play_url(speaker, url, title?)`, `play_file(speaker, path, title?)`
-- Transport: `pause`, `resume`, `stop`, `next_track`, `previous_track`
+- Playback: `play_url(speakers[], url, title?, detach?)`,
+  `play_file(speakers[], path, title?, detach?)`,
+  `play_stream(speakers[], url, title?, detach?)`
+- Transport (single speaker; resolves to that speaker's group coordinator):
+  `pause`, `resume`, `stop`, `next_track`, `previous_track`
 - Volume: `set_volume(speaker, 0-100)`, `mute`, `unmute`
 - Maintenance: `reboot(speaker)` — restarts one speaker (drops off the
   LAN ~30-60s; re-run `refresh_speakers` before driving it again)
 - Grouping: `group(coordinator, [members])`, `ungroup`,
   `partymode(coordinator)`, `dissolve_all_groups`
-- Voice: `say(target, text, volume?)` — target can be a speaker name or
-  `"all"` for a synchronized announcement across every speaker
+- Voice: `say(speakers[], text, volume?, detach?)` — `speakers` is either
+  a list of one or more speaker names, or the single-item list `["all"]`
+  for a synchronized announcement across every speaker (`"all"` cannot be
+  combined with other names; `detach` is ignored for it)
 - Playlists (in-memory, named):
   `playlist_create`, `playlist_add(name, url, title?)`,
-  `playlist_add_many(name, items[])`, `playlist_play(speaker, name,
-  shuffle?, start_index?)` → returns `engine` (`native_queue` or
-  `worker`), `playlist_next`, `playlist_previous`,
-  `playlist_stop`, `playlist_status`, plus
-  `playlist_list`/`get`/`remove`/`clear`/`delete`
+  `playlist_add_many(name, items[])`,
+  `playlist_from_page(name, page_url, limit?, offset?, shuffle?,
+  speakers?, detach?)` — build a playlist from a web page's `.mp3` links,
+  optionally starting playback in the same call,
+  `playlist_play(speakers[], name, shuffle?, start_index?, detach?)` →
+  returns `engine` (`native_queue` or `worker`), `playlist_next`,
+  `playlist_previous`, `playlist_stop`, `playlist_status` (any of these
+  four accept any speaker in the group `playlist_play` formed, not just
+  its coordinator), plus `playlist_list`/`get`/`remove`/`clear`/`delete`
 
 ## How to use it well
 
 1. Speakers are addressed by display name, case-insensitive. Call
    `list_speakers` if you're unsure what's available.
 
-2. Transport commands auto-route to the group coordinator. You never
-   need to track which speaker is leading a group. Each response
-   includes `group_members` so you can see what was affected. Trust it.
+2. **Target sets and `detach`.** Every audio-sending tool
+   (`play_url`, `play_file`, `play_stream`, `say`, `playlist_play`, and
+   `playlist_from_page` when given `speakers`) takes `speakers: list[str]`
+   — one or more names, in order — plus `detach: bool` (default `true`).
+   To play on specific speakers, pass them all in `speakers`. By default
+   exactly those speakers play: anything they were grouped with is
+   stopped and separated, and other groups are untouched. Pass
+   `detach: false` only when you want each target's existing group to
+   play too (if the targets span more than one group, those groups merge
+   — everything in them plays, together). Every response includes
+   `targets`, `coordinator`, `group_members`, `stopped`, and `detached`
+   so you can see exactly what got affected — trust it, don't re-query.
 
-3. For radio and streams, prefer plain HTTP MP3. Sonos does NOT support
+3. Transport commands (`pause`, `stop`, etc.) stay single-speaker and
+   auto-route to the group coordinator. You never need to track which
+   speaker is leading a group; responses include `group_members`.
+
+4. For radio and streams, prefer plain HTTP MP3. Sonos does NOT support
    HLS (`.m3u8`) at all. AAC is hit-or-miss. If a user names a radio
    station, look for its direct MP3 URL (commonly
    `http://<host>/<station>.mp3`). HTTPS sometimes works but plain HTTP
    is safer.
 
-4. For announcements, use `say` — don't synthesize audio yourself.
-   `say` handles TTS, hosting, and (for `target="all"`) the full
+5. For announcements, use `say` — don't synthesize audio yourself.
+   `say` handles TTS and hosting; for `speakers=["all"]` it does the full
    group-then-broadcast-then-ungroup dance. It blocks until playback
    finishes.
 
-5. Volume conventions: 0-100. 30-40 is background, 50-60 is actively
+6. Volume conventions: 0-100. 30-40 is background, 50-60 is actively
    listening, 70+ is loud. Default to ~40 unless the user signals
    otherwise.
 
-6. "Play X everywhere": call `partymode("<any speaker>")` first, then
-   `play_url("<that coordinator>", "<url>")`. Don't ungroup afterward
-   unless the user wants speakers independent.
+7. **"Play X everywhere"**: call `list_speakers`, then pass every speaker
+   name in `speakers` on `play_url`/`play_stream` (or use
+   `say(["all"], ...)` for an announcement). Don't call `partymode`
+   followed by `play_url` — the target-set contract already groups and
+   plays in one call.
 
-7. "Stop everything": enumerate groups via `list_groups`, call `stop`
-   on each coordinator.
+8. **"Stop everything"**: enumerate groups via `list_groups`, call `stop`
+   on each coordinator. `stop` stays per-coordinator; it isn't a
+   target-set tool.
 
-8. `say` and `play_url` interrupt whatever was playing and then
-   **auto-resume** (mid-track, best-effort) if the speaker had a native
-   Sonos queue active: the server snapshots the queue position, plays
-   the clip, then resumes at that track (seeking to the captured
-   position; falls back to start-of-track if the host rejects the seek).
-   No manual capture/replay needed for the native-queue path.
+9. `say` and `play_url` interrupt whatever was playing and then
+   **auto-resume** (mid-track, best-effort) if the resulting coordinator
+   had a native Sonos queue active AND was already leading its own group
+   before the call: the server snapshots the queue position, forms the
+   target group, plays the clip, then resumes at that track (seeking to
+   the captured position; falls back to start-of-track if the host
+   rejects the seek). No manual capture/replay needed for that case.
+   Stopped bystanders are never resumed — they end stopped, per the
+   target-set contract. If a non-chosen target was also playing its own
+   queue, that queue is not resumed either (best-effort limit).
 
    If the playlist used the **worker engine** (`engine: "worker"` in
    `playlist_play` response) — or if there was no active playlist — the
@@ -405,10 +448,10 @@ no Sonos cloud involved.
    `play_url` the same URI again afterward. `resume`/`pause` only work
    for queue-based playback, not radio streams.
 
-9. Tool responses already include resulting state. Don't follow up
-   with `now_playing` to confirm — read the response.
+10. Tool responses already include resulting state. Don't follow up
+    with `now_playing` to confirm — read the response.
 
-10. For multi-song playback, use playlists. Build with
+11. For multi-song playback, use playlists. Build with
     `playlist_create` + `playlist_add_many` (one call with all items
     beats N individual `playlist_add` calls), then `playlist_play`.
     The response includes `engine: "native_queue"` or `engine:
@@ -422,7 +465,7 @@ no Sonos cloud involved.
     items to a playlist that's already playing is fine — newly-appended
     tracks will be picked up when the worker reaches them.
 
-11. Playlist control after interruption differs by engine. For the
+12. Playlist control after interruption differs by engine. For the
     **worker engine**: `say`, `play_url`, or external Sonos-app
     interaction terminates the worker (it detects the takeover via URI
     mismatch and exits). Call `playlist_stop` rather than Sonos
@@ -446,11 +489,20 @@ no Sonos cloud involved.
   context makes it clearly desired (timer fires, the user said "tell
   everyone dinner's ready"). A speaker playing music is a deliberate
   state — don't interrupt for status updates the user didn't request.
+- Don't call `partymode` + `play_url` to play everywhere — pass every
+  speaker name in `speakers` instead (see "Play X everywhere" above).
 
 ## Error handling
 
 Unknown speaker names return an error listing the valid names — surface
-that to the user verbatim rather than guessing. Network errors ("No
+that to the user verbatim rather than guessing. `NoSpeakersFound` means
+discovery itself failed (no speakers visible at all) — its message names
+what was tried; surface its hints (which env var to set) rather than
+retrying blindly. `GroupingError` means forming or confirming the target
+group failed partway through — its message includes the observed
+topology of every speaker involved; read it, then either retry (transient
+topology races usually resolve on the next attempt) or report the
+specific failure to the user rather than guessing. Network errors ("No
 route to host") usually mean a speaker is sleeping or off-network;
 suggest the user power-cycle it or check the Sonos app.
 ````
@@ -459,7 +511,7 @@ suggest the user power-cycle it or check the Sonos app.
 
 ```
 mcp_sonos/
-├── server.py       # FastMCP — 35 tools, stdio transport
+├── server.py       # FastMCP — tool registration, stdio transport
 ├── controller.py   # All business logic; MCP-agnostic, unit-testable
 ├── speakers.py     # Discovery (seeds -> learned seeds -> bounded scan -> SSDP) + name resolution
 ├── audio_host.py   # Persistent HTTP server hosting TTS / staged files
@@ -486,7 +538,7 @@ mcp_sonos/
 Hardening ideas for when this gets picked back up:
 
 - **Stream proxy / transcoder** (ffmpeg-based) so HLS and finicky AAC
-  stations Just Work. New tool: `play_radio(speaker, url, title)`.
+  stations Just Work. New tool: `play_radio(speakers, url, title)`.
 - **Playlist persistence** — playlists currently live only in RAM and
   vanish on server restart. A small SQLite store or JSON file would
   let "morning_mix" survive across restarts.
