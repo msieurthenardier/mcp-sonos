@@ -710,9 +710,17 @@ def stub_controller_say(monkeypatch, tmp_path):
 
 class _SlaveOnPlayUriFake(SoCoFake):
     """SoCoFake whose play_uri always raises SoCoSlaveException, modeling a
-    stale SoCo-cache-vs-firmware coordinator view (see test_say_coordinator.py)."""
+    stale SoCo-cache-vs-firmware coordinator view (see test_say_coordinator.py).
+
+    Records `clear_count_at_failure` — the household's clear_cache_count at
+    the moment play_uri raises — so a test can distinguish clears that
+    happened BEFORE the stale-coordinator exception (e.g. flight 2's
+    `_plan_targets` pre-snapshot clear) from ones that happen because of it
+    (the stale-coordinator retry's `invalidate()`).
+    """
 
     def play_uri(self, uri, title=None, force_radio=False):  # type: ignore[override]
+        self.clear_count_at_failure = self.zone_group_state.clear_cache_count
         raise SoCoSlaveException("play_uri can only be called on the coordinator")
 
 
@@ -727,9 +735,26 @@ def test_say_inline_retry_clears_socos_cache(monkeypatch, stub_controller_say):
 
     monkeypatch.setattr(controller_mod.sp, "discover_speakers", _fake_discover)
 
-    stub_controller_say.say("Kitchen", "hello")
+    stub_controller_say.say(["Kitchen"], "hello")
 
-    assert stale.zone_group_state.clear_cache_count == 1
+    # Flight 2: `_plan_targets` now also clears SoCo's ZGS cache once,
+    # unconditionally, before its topology snapshot — on top of the
+    # pre-existing stale-coordinator retry's clear. That's a behavior
+    # INCREASE (more cache-clearing, not less), so the exact count goes
+    # from 1 to 2.
+    #
+    # Leg 4 (coordinator-view hardening) adds one more: `_execute_plan`
+    # now ends with an unconditional `_sync_view(c0, expect_coordinator=True)`
+    # — a forced fresh poll through c0 itself — before returning, so the
+    # count by the time `play_uri` raises goes from 2 to 3 total (the
+    # `_plan_targets` clear, then `_sync_view`'s), with one further clear
+    # after the failure (the stale-coordinator retry's `invalidate()`).
+    # The two assertions below keep the test's original intent ("the retry
+    # clears SoCo's cache") distinct from the pre-`play_uri` clears: two
+    # clears had already happened by the time `play_uri` raised, and at
+    # least one more happened afterward.
+    assert stale.clear_count_at_failure == 2
+    assert stale.zone_group_state.clear_cache_count == 3
 
 
 def test_ttl_expiry_does_not_clear_socos_cache(monkeypatch, stub_controller):
@@ -773,7 +798,7 @@ def test_say_propagates_no_speakers_found_through_stale_retry(monkeypatch, stub_
     monkeypatch.setattr(controller_mod.sp, "discover_speakers", _fake_discover)
 
     with pytest.raises(NoSpeakersFound):
-        stub_controller_say.say("Kitchen", "hello")
+        stub_controller_say.say(["Kitchen"], "hello")
 
 
 def test_play_via_queue_propagates_no_speakers_found_through_stale_retry():
