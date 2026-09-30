@@ -104,11 +104,11 @@ def test_say_recovers_after_rediscover_returns_fresh_coordinator(
 
     monkeypatch.setattr(controller_mod.sp, "discover_speakers", _fake_discover)
 
-    result = stub_controller.say("Kitchen", "hello world")
+    result = stub_controller.say(["Kitchen"], "hello world")
 
     # Two discovery passes: initial resolve + retry-triggered re-resolve.
     assert calls["n"] == 2, "fix must force a re-discovery on SoCoSlaveException"
-    assert result["spoken_on"] == "Kitchen"
+    assert result["coordinator"] == "Kitchen"
     # The fresh fake actually received the play_uri call.
     assert fresh._track["uri"].startswith("http://test.invalid/")
 
@@ -131,7 +131,7 @@ def test_say_propagates_when_rediscover_also_returns_stale_coordinator(
     monkeypatch.setattr(controller_mod.sp, "discover_speakers", _fake_discover)
 
     with pytest.raises(SoCoSlaveException):
-        stub_controller.say("Kitchen", "hello world")
+        stub_controller.say(["Kitchen"], "hello world")
 
     # Exactly two passes — no infinite retry loop.
     assert calls["n"] == 2
