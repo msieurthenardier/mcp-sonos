@@ -1,6 +1,6 @@
 # Mission: Zero-Config Discovery & Deterministic Speaker Targeting
 
-**Status**: planning
+**Status**: active
 
 ## Outcome
 An agent can drive the whole Sonos household without anyone configuring
@@ -139,5 +139,5 @@ N/A — none open at mission start.
 
 > **Note:** These are tentative suggestions, not commitments. Flights are planned and created one at a time as work progresses. This list will evolve based on discoveries during implementation.
 
-- [ ] Flight 1: Zero-config discovery — scan-first discovery with no configuration, configured IPs as a way in that expands to the full household, clear failure diagnostics, and corrected docs/tool descriptions. First because targeting work and its hardware verification need every speaker (Patio) discoverable.
+- [x] Flight 1: Zero-config discovery — scan-first discovery with no configuration, configured IPs as a way in that expands to the full household, clear failure diagnostics, and corrected docs/tool descriptions. First because targeting work and its hardware verification need every speaker (Patio) discoverable.
 - [ ] Flight 2: Deterministic target-set playback — list-of-speakers targets on all audio-sending tools, detach-by-default grouping (stop bystanders), explicit opt-out, both playlist engines and queue-resume preserved, schema + README system prompt + version bump. Its own flight: a breaking interface change with the hardware-dependent grouping behavior as its risk.

@@ -148,7 +148,7 @@ class SonosController:
             resolve_coordinator=self._resolve_coordinator,
             host_ip=self._host_ip,
             audio_port=self.audio.port,
-            invalidate_speakers_cache=lambda: setattr(self, "_speakers_ts", 0.0),
+            invalidate_speakers_cache=self._invalidate_speakers,
         )
         # Injectable sleep for _say_all topology-settle; defaults to the real
         # time.sleep so production behavior is unchanged.  Tests patch this to
@@ -163,7 +163,54 @@ class SonosController:
             self._speakers_ts = time.monotonic()
         return self._speakers
 
+    def _invalidate_speakers(self) -> None:
+        """Force the next speaker access to bypass both cache layers.
+
+        Zeroes our own 30s TTL (`_speakers_ts`) AND clears SoCo's own
+        per-household `ZoneGroupState` cache (`POLLING_CACHE_TIMEOUT` =
+        5s) — otherwise a re-discovery that lands within 5s of the last
+        poll would return the same stale topology even though our app
+        cache was reset. `ZoneGroupState` is shared process-wide per
+        household, so clearing it via one cached speaker per household is
+        enough.
+
+        This method never discovers anything itself — it only clears
+        state so the *next* `_speakers_fresh()` / `refresh()` call is
+        forced to. Swallows per-speaker exceptions (e.g. a fake or a
+        speaker that went unreachable has no usable `household_id`), and
+        is a no-op when the cache is empty.
+
+        Used by every forced-refresh path: `refresh()`, the `_resolve()`
+        name-miss retry, `reboot()`, the `PlaylistManager` invalidation
+        callback, and `say()`'s inline stale-coordinator retry. Any new
+        forced-refresh path must route through this too, or it will
+        intermittently see stale topology.
+        """
+        self._speakers_ts = 0.0
+        seen_households: set[str] = set()
+        for s in self._speakers:
+            try:
+                household = s.household_id
+            except Exception:
+                continue
+            if household in seen_households:
+                continue
+            seen_households.add(household)
+            try:
+                s.zone_group_state.clear_cache()
+            except Exception:
+                continue
+
     def refresh(self) -> list[dict]:
+        """Force a fresh discovery, bypassing both cache layers.
+
+        Clears SoCo's own topology cache (via `_invalidate_speakers`) in
+        addition to resetting our TTL, then re-discovers immediately via
+        the seeds -> bounded-scan -> SSDP pipeline (`speakers.discover_speakers`).
+        Use this after adding, renaming, or rebooting a speaker if you
+        don't want to wait out the 30s TTL.
+        """
+        self._invalidate_speakers()
         self._speakers = sp.discover_speakers()
         self._speakers_ts = time.monotonic()
         return [_speaker_dict(s) for s in self._speakers]
@@ -172,7 +219,16 @@ class SonosController:
         return [_speaker_dict(s) for s in self._speakers_fresh()]
 
     def _resolve(self, name: str) -> SoCo:
-        return sp.resolve_name(self._speakers_fresh(), name)
+        try:
+            return sp.resolve_name(self._speakers_fresh(), name)
+        except sp.SpeakerNotFound:
+            # The cached list may be stale (speaker just added, renamed, or
+            # rebooted). Force exactly one fresh discovery — bypassing
+            # SoCo's own topology cache too — and retry once before giving
+            # up. A NoSpeakersFound raised during this re-discovery
+            # propagates as-is (not wrapped as SpeakerNotFound).
+            self._invalidate_speakers()
+            return sp.resolve_name(self._speakers_fresh(), name)
 
     def _resolve_coordinator(self, name: str) -> tuple[SoCo, SoCo]:
         """Return (named_speaker, its_coordinator).
@@ -454,8 +510,9 @@ class SonosController:
         s = self._resolve(name)
         _reboot_via_http(s.ip_address)
         # The cached SoCo for this speaker is about to become unreachable;
-        # force a fresh discovery on the next access (same idiom as elsewhere).
-        self._speakers_ts = 0.0
+        # force a fresh discovery (bypassing SoCo's topology cache too) on
+        # the next access.
+        self._invalidate_speakers()
         return {"speaker": s.player_name, "ip": s.ip_address, "rebooting": True}
 
     # ---- grouping -----------------------------------------------------------
@@ -556,7 +613,7 @@ class SonosController:
             coord_holder[0] = with_stale_coord_retry(
                 coord=coord_holder[0],
                 action=lambda c: c.play_uri(url, title=f"Say: {text[:40]}"),
-                invalidate=lambda: setattr(self, "_speakers_ts", 0.0),
+                invalidate=self._invalidate_speakers,
                 resolve=lambda: self._resolve_coordinator(target)[1],
             )
 
@@ -659,10 +716,10 @@ class SonosController:
                 pass  # best-effort: swallow resume failures
 
     def _say_all(self, text: str, url: str, volume: int | None) -> dict:
-        # Dissolve, partymode, play, dissolve.
+        # Dissolve, partymode, play, dissolve. _speakers_fresh() raises
+        # NoSpeakersFound (never returns empty) when discovery finds
+        # nothing, so no empty-list guard is needed here.
         speakers = self._speakers_fresh()
-        if not speakers:
-            raise RuntimeError("No speakers available")
         for s in speakers:
             try:
                 s.unjoin()

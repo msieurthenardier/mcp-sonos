@@ -56,7 +56,11 @@ def register_tools(mcp: FastMCP, controller: SonosController) -> None:
 
     @mcp.tool
     def list_speakers() -> list[dict]:
-        """List every visible Sonos speaker with its IP, group, volume, and mute state."""
+        """List every visible Sonos speaker with its IP, group, volume, and mute state.
+
+        Raises an explanatory error (naming what was tried and what env
+        vars to set) if no speakers can be found on the LAN.
+        """
         return controller.list_speakers()
 
     @mcp.tool
@@ -66,7 +70,7 @@ def register_tools(mcp: FastMCP, controller: SonosController) -> None:
 
     @mcp.tool
     def refresh_speakers() -> list[dict]:
-        """Force a fresh SSDP discovery (use if speakers were added/renamed)."""
+        """Force a fresh discovery, bypassing all caches (use if speakers were added/renamed)."""
         return controller.refresh()
 
     @mcp.tool

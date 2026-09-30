@@ -15,13 +15,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 
-# SSDP discovery can race when not all speakers are in the discovery window.
-# Set deterministic IPs by default; users with different LANs can override
-# by setting SONOS_IPS in the shell before running the script.
-# See CLAUDE.md "Operating constraints" for the SONOS_IPS convention.
-os.environ.setdefault("SONOS_IPS", "192.168.1.51,192.168.1.52,192.168.1.53,192.168.1.54,192.168.1.55")
+# Zero-config discovery (seeds -> bounded scan -> SSDP) runs with no env vars
+# set. Set SONOS_IPS in the shell first if this host's default scan can't
+# reach the household (see CLAUDE.md "Operating constraints").
 
 logging.basicConfig(
     level=logging.INFO,

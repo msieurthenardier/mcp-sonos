@@ -65,16 +65,15 @@ into `~/.cache/mcp-sonos/voices/` — subsequent runs reuse it.
         "--from", "git+https://github.com/msieurthenardier/mcp-sonos",
         "mcp-sonos"
       ],
-      "env": {
-        "SONOS_IPS": "192.168.1.10,192.168.1.11,192.168.1.12",
-        "HOST_IP": "192.168.1.50"
-      }
+      "env": {}
     }
   }
 }
 ```
 
-The `env` block is optional but recommended — see [Configuration](#configuration-env-vars) below.
+The `env` block is optional — discovery works with zero configuration on
+most home LANs. See [Configuration](#configuration-env-vars) below for
+when to set `SONOS_IPS`, `SONOS_SCAN_NETWORKS`, or `HOST_IP`.
 
 ### From source
 
@@ -93,8 +92,9 @@ file when running from source. See `.env.example` in the repo.
 
 | var | default | when to set it |
 |---|---|---|
-| `SONOS_IPS` | _(empty — auto-discover via SSDP)_ | Comma-separated speaker IPs. **Recommended** when SSDP multicast is unreliable (WSL2 default networking, Docker bridges, isolated guest VLANs, mesh WiFi with broken IGMP) or just for deterministic startup. Bypasses SSDP entirely. Get the IPs from your router or the Sonos app. |
-| `HOST_IP` | _(auto-detected by routing probe + interface scan)_ | LAN IP the audio HTTP server should advertise to speakers. Override when auto-detection picks the wrong interface — common when the host has multiple interfaces (Docker, VPN, WSL2 in NAT mode). Must be an IP **the speakers can reach**. |
+| `SONOS_IPS` | _(empty — zero-config discovery)_ | Comma-separated **seed** IPs, tried in order. The first one that answers is expanded to the whole visible household (not restricted to just the listed IPs) — this is a way *in* on networks where the default bounded scan or SSDP can't reach the speakers, not an exhaustive allow-list. Unlisted household members are no longer hidden. Set it for deterministic startup, or when neither the scan nor SSDP works from this host (isolated guest VLANs, some Docker/VPN setups). Get the IPs from your router or the Sonos app. |
+| `SONOS_SCAN_NETWORKS` | _(derived from `HOST_IP`'s network, clamped to /24)_ | Comma-separated CIDRs (each `/16` or narrower) that override the default bounded subnet scan (stage 2 of discovery, used when no seed answers). Set this when the default derivation picks the wrong network, or to point the scan at a different subnet than this host's own. |
+| `HOST_IP` | _(auto-detected by routing probe + interface scan)_ | LAN IP the audio HTTP server should advertise to speakers. Also bounds the default `SONOS_SCAN_NETWORKS` derivation (discovery stage 2). Override when auto-detection picks the wrong interface — common when the host has multiple interfaces (Docker, VPN, WSL2 in NAT mode). Must be an IP **the speakers can reach**. |
 | `AUDIO_PORT` | _(first free TCP port in 8000-8999)_ | Pin the audio server to a specific port. Useful when your firewall rule allows only one port instead of a range, or for stable logs. |
 | `AUDIO_MEDIA_ROOT` | _(unset — `play_file` disabled)_ | Directory the `play_file` tool is allowed to stage from. Capability scoping against a misaligned agent: when unset, `play_file` returns an error and stages nothing. Paths are resolved (symlinks followed) before the containment check; extensions are restricted to `.mp3`/`.wav`/`.flac`/`.m4a`/`.ogg`. Does not secure the audio HTTP host itself — see [Networking / topology limitations](#networking--topology-limitations). |
 | `PLAY_URL_RESUME_TIMEOUT_SECONDS` | `3600` | Maximum time `play_url()` (and `play_file()`, which calls it) blocks waiting for a clip to finish before giving up and attempting to resume a native Sonos queue (mid-track, best-effort). Generous default covers most long-form content; live streams that never stop won't auto-resume after this cap (silently swallowed). |
@@ -110,17 +110,17 @@ prints the observed hash so you can add it to `KNOWN_VOICE_HASHES` in
 
 ### Picking values
 
-- **Same machine as the server you ran from source**: leave everything empty, auto-detection handles it.
-- **You hit "No speakers found" or sporadic discovery failures**: set `SONOS_IPS` explicitly. SSDP is a luxury, not a requirement.
+- **Same machine as the server you ran from source**: leave everything empty. Zero-config discovery (seeds → learned seeds → bounded scan → SSDP) handles it. The scan only runs cold, or when nothing already known answers; it's deliberately rate-limited rather than full-speed, so it doesn't disrupt other LAN traffic to the speakers.
+- **You hit "No speakers found" with the diagnostic error**: it names every seed tried (configured and learned), the network(s) scanned, and the SSDP result. Follow whichever hint it points at — usually `SONOS_IPS` (a known-good seed IP) or `SONOS_SCAN_NETWORKS` (the right subnet) fixes it.
 - **Audio server binds but speakers never fetch (`TRANSITIONING → STOPPED` with no HTTP hits)**: `HOST_IP` is wrong, or a firewall is blocking. Set `HOST_IP` to the IP a speaker on the LAN would use to reach this host.
-- **Container / VPN / multi-NIC host**: set both `SONOS_IPS` and `HOST_IP` so nothing is guessed.
+- **Container / VPN / multi-NIC host**: set `HOST_IP` (bounds both the audio server and the default scan network) and, if that's still not enough, `SONOS_IPS` or `SONOS_SCAN_NETWORKS` explicitly.
 
 ## Network requirements
 
 The host running the MCP server must be on the **same LAN/VLAN/SSID**
 as the speakers, with:
 
-1. SSDP multicast reachable (or speakers listed via `SONOS_IPS`).
+1. The bounded subnet scan or SSDP multicast reachable (or speakers listed via `SONOS_IPS` as seeds).
 2. **Inbound TCP** from each speaker to the host's audio server. Speakers
    pull audio over HTTP, so the OS firewall, host firewall, and any router
    ACLs between them and the host all need to allow the audio port range
@@ -200,9 +200,9 @@ Read these before you wire the server into an agent — they save real time.
   visible zone. Bonded units (the second member of a stereo pair, the
   sub) are hidden — that's intentional, you control them via the visible
   zone.
-- **Portable speakers (Move, Roam, Roam SL)** vanish from SSDP when on
-  Bluetooth or asleep on battery. They rejoin on wake. Don't cache
-  IPs forever (the controller refreshes every 30 s).
+- **Portable speakers (Move, Roam, Roam SL)** vanish from every discovery
+  stage when on Bluetooth or asleep on battery. They rejoin on wake.
+  Don't cache IPs forever (the controller refreshes every 30 s).
 - **Firmware 85.0+ Security Settings panel** added a per-household UPnP
   toggle (defaults on). If a user disables it, this MCP can't reach
   that household. Surface the error verbatim — it's clear enough.
@@ -259,9 +259,22 @@ Read these before you wire the server into an agent — they save real time.
   works (Sonos needs that to fetch audio), so any file already in the
   serve root remains readable to anyone who can guess or learn its
   name.
-- **Discovery cache is 30 s.** A speaker rename or a new speaker
-  showing up takes up to 30 s to reflect in `list_speakers` unless
-  the agent calls `refresh_speakers` explicitly.
+- **Discovery cache is 30 s, with one built-in early refresh.** A speaker
+  rename or a new speaker showing up normally takes up to 30 s to reflect
+  in `list_speakers`. The one exception: if the agent addresses a speaker
+  by name and it's missing from the cached list, the controller forces one
+  fresh discovery and retries before giving up — so a speaker that was
+  just added, renamed, or rebooted usually resolves immediately on the
+  next tool call, without needing an explicit `refresh_speakers`.
+- **The subnet scan only runs cold, or when nothing already known
+  answers.** Discovery remembers the household it last found (in-process
+  "learned seeds") and tries that first; a repeat call in the same process
+  normally never scans at all. The scan itself is deliberately
+  rate-limited — a full-speed scan briefly disrupts this host's LAN
+  connections to the real speakers on some hosts (observed under WSL2
+  mirrored networking), so it trades a bit of scan time for not doing
+  that. A stale or dead learned seed is harmless: it just falls through
+  to the scan, the same as a cold start.
 - **`now_playing` for radio streams is incomplete.** Most streams
   expose only the stream URL, not the current song's metadata. ICY
   metadata parsing isn't implemented (SoCo doesn't do it either).
@@ -448,7 +461,7 @@ suggest the user power-cycle it or check the Sonos app.
 mcp_sonos/
 ├── server.py       # FastMCP — 35 tools, stdio transport
 ├── controller.py   # All business logic; MCP-agnostic, unit-testable
-├── speakers.py     # Discovery (SSDP + SONOS_IPS) + name resolution
+├── speakers.py     # Discovery (seeds -> learned seeds -> bounded scan -> SSDP) + name resolution
 ├── audio_host.py   # Persistent HTTP server hosting TTS / staged files
 ├── playlists.py    # Named playlists + two-engine playback (native queue / worker)
 └── tts.py          # Piper voice loading + content-hash cache

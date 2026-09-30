@@ -27,6 +27,9 @@ dependencies = [
     "soco>=0.30",
     "piper-tts>=1.3",
     "pydantic>=2.0",
+    # Transitive via soco, but mcp_sonos.speakers imports it directly for
+    # adapter-network lookup during the bounded subnet scan.
+    "ifaddr>=0.2",
 ]
 
 [project.optional-dependencies]
