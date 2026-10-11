@@ -247,11 +247,18 @@ class SonosController:
             host_ip=self._host_ip,
             audio_port=self.audio.port,
             invalidate_speakers_cache=self._invalidate_speakers,
+            synthesize_voice=self._synthesize_voice_url,
         )
         # Injectable sleep for _say_all topology-settle; defaults to the real
         # time.sleep so production behavior is unchanged.  Tests patch this to
         # a no-op so the 1.0s settle doesn't dominate the suite wall-clock.
         self._sleep = time.sleep
+
+    def _synthesize_voice_url(self, text: str) -> str:
+        """Playlist voice-item synthesizer: same pipeline `say` uses
+        (Piper -> TTS cache -> audio host URL). `synthesize` is looked up as
+        a module global at call time so tests can patch it."""
+        return self.audio.url_for(synthesize(text, self.cache_dir).name)
 
     # ---- discovery / lookup -------------------------------------------------
 

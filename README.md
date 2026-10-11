@@ -312,7 +312,11 @@ Read these before you wire the server into an agent — they save real time.
     (served by this process's audio HTTP server) or the server's
     host/port isn't yet known. An in-process background thread drives
     `play_uri` for each track. Playback stops when the MCP process
-    exits or is reaped.
+    exits or is reaped. **Voice items** (`text` instead of `url`, see
+    `playlist_add`) are synthesized at add time to an MCP-hosted WAV,
+    so any playlist containing one always uses the worker engine. Items
+    appended while a worker playlist is still playing are played; once
+    the playlist has finished, call `playlist_play` again.
 - **The Sonos app shows an empty queue for native-queue items.** Items
   injected via `add_multiple_to_queue` appear in the hardware queue
   but not in the Sonos app's "Queue" view. This is a firmware display
@@ -372,8 +376,9 @@ no Sonos cloud involved.
   for a synchronized announcement across every speaker (`"all"` cannot be
   combined with other names; `detach` is ignored for it)
 - Playlists (in-memory, named):
-  `playlist_create`, `playlist_add(name, url, title?)`,
-  `playlist_add_many(name, items[])`,
+  `playlist_create`, `playlist_add(name, url?, text?, title?)` (exactly
+  one of `url` or `text`; `text` is a spoken DJ segment, max 1000 chars),
+  `playlist_add_many(name, items[])` (each item `{url|text, title?}`),
   `playlist_from_page(name, page_url, limit?, offset?, shuffle?,
   speakers?, detach?)` — build a playlist from a web page's `.mp3` links,
   optionally starting playback in the same call,
@@ -461,9 +466,13 @@ no Sonos cloud involved.
     `playlist_previous`, and `playlist_stop` work even after a reap
     by driving the live coordinator directly. With `worker`, playback
     runs in-process and stops if the MCP server exits. Playlists are
-    in-memory only (no persistence across server restart), and adding
-    items to a playlist that's already playing is fine — newly-appended
-    tracks will be picked up when the worker reaches them.
+    in-memory only (no persistence across server restart). Adding items
+    to a playlist that is still playing on the **worker engine** works:
+    the worker picks up appended items when it reaches the end of what
+    it has scheduled. If the playlist has already finished, appended
+    items do nothing until you call `playlist_play` again. A
+    `native_queue` playlist that is already playing does NOT pick up
+    appends (the hardware queue was loaded at start).
 
 12. Playlist control after interruption differs by engine. For the
     **worker engine**: `say`, `play_url`, or external Sonos-app
@@ -475,6 +484,17 @@ no Sonos cloud involved.
     the live coordinator directly. `say` / `play_url` will auto-resume
     the queue mid-track (best-effort) after the clip finishes — you do
     not need to manually restart the playlist.
+
+13. **DJ segments.** To introduce music yourself, put spoken items in the
+    playlist: `playlist_add_many` with `{"url": ...}` and `{"text": ...}`
+    items in one call, e.g. song, song, voice, song. Text is synthesized
+    when you add it (about a second each), so errors appear at build time.
+    Play it unshuffled — `shuffle=true` scatters voice items away from the
+    songs they introduce. Keep segments short (a sentence or two; the cap is
+    1000 characters), and use `say` instead for long announcements. A
+    playlist with voice items runs on the worker engine and stops if the
+    MCP server exits. `playlist_previous` follows play order, so from the
+    song after a voice item it replays the voice item.
 
 ## What NOT to do
 

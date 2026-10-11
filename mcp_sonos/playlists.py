@@ -9,6 +9,14 @@ speaker — see CLAUDE.md for the design history. External playback events
 (e.g., a `say()` call, a `play_url()`, a manual stop) cleanly terminate
 the session.
 
+Item kinds: a *track* (an audio `url`) or a *voice* item (`text`
+synthesized at add time to an MCP-hosted WAV via the injected
+`synthesize_voice`). Voice items carry the hosted URL, so a playlist with
+any voice item routes to the worker engine. On the worker engine, items
+appended while the playlist is still playing are picked up: the worker
+schedules item *objects* (identity, not indices) and extends its play
+order from `playlist.items` under `self._lock` when it reaches the end.
+
 Per-process state. Nothing persists across server restarts. That's
 deliberate — playlists are scratch space for the agent, not a library.
 """
@@ -38,6 +46,10 @@ from ._urls import any_mcp_hosted, validate_http_url
 # Audit any future DidlMusicTrack construction to ensure this invariant holds.
 QUEUE_PARENT_ID = "A:TRACKS"
 
+# Hard cap on voice-item text (DD-4). Over-cap text is an error, never
+# truncated. Long-form narration should use `say`.
+MAX_VOICE_TEXT_CHARS = 1000
+
 
 log = logging.getLogger("mcp_sonos.playlists")
 
@@ -54,11 +66,21 @@ STOPPED_CONFIRMATIONS = 2
 
 @dataclass
 class PlaylistItem:
+    # NOTE: dataclass value equality. Scheduling/removal checks in the worker
+    # use identity (`is` / `id()`), never `==` / `in` on item lists.
     url: str
     title: Optional[str] = None
+    text: Optional[str] = None  # set only for voice items
+
+    @property
+    def kind(self) -> str:
+        return "voice" if self.text is not None else "track"
 
     def to_dict(self) -> dict:
-        return {"url": self.url, "title": self.title}
+        d = {"kind": self.kind, "url": self.url, "title": self.title}
+        if self.text is not None:
+            d["text"] = self.text
+        return d
 
 
 @dataclass
@@ -82,6 +104,13 @@ class PlaybackSession:
     current_index: int = 0
     shuffle: bool = False
     started_at: float = field(default_factory=time.monotonic)
+
+    # Play order as item object references (permuted when shuffled), and the
+    # id() of every item ever placed in `order` (DD-5, identity scheduling).
+    order: list = field(default_factory=list)
+    scheduled_ids: set = field(default_factory=set)
+    # The item the worker is on (DD-9); start item initially.
+    current_item: Optional["PlaylistItem"] = None
 
     # Signaling. Worker checks each on every poll cycle.
     stop_event: threading.Event = field(default_factory=threading.Event)
@@ -114,6 +143,7 @@ class PlaylistManager:
         host_ip: str = "",
         audio_port: int = 0,
         invalidate_speakers_cache: Callable[[], None] = lambda: None,
+        synthesize_voice: Optional[Callable[[str], str]] = None,
     ):
         """`resolve_coordinator(name) -> (named_speaker, coordinator)` is
         injected so tests / future refactors don't pull in the whole
@@ -130,7 +160,13 @@ class PlaylistManager:
         coordinator on a SoCoSlaveException retry, ensuring the cache TTL is
         bypassed and a fresh discovery is forced.  Defaults to a no-op so
         existing direct constructions and tests don't break.
+
+        `synthesize_voice(text) -> hosted_url` synthesizes a voice item's
+        text to an MCP-hosted audio URL at add time. `None` (bare test
+        construction) makes adding a voice item a `PlaylistError`. It is
+        always called outside `self._lock`.
         """
+        self._synthesize_voice = synthesize_voice
         self._resolve_coordinator = resolve_coordinator
         self._host_ip = host_ip
         self._audio_port = audio_port
@@ -170,36 +206,89 @@ class PlaylistManager:
             pl.items.clear()
             return pl
 
-    def add(self, name: str, url: str, title: Optional[str] = None) -> Playlist:
-        pl = self._get_playlist(self._validate_name(name))
-        url = url.strip()
-        if not url:
-            raise PlaylistError("url is empty")
-        try:
-            validate_http_url(url)
-        except ValueError as e:
-            raise PlaylistError(str(e))
-        with self._lock:
-            pl.items.append(PlaylistItem(url=url, title=title))
-            return pl
-
-    def add_many(self, name: str, items: list[dict]) -> Playlist:
-        """Bulk-add. Each dict must have `url`; `title` is optional."""
-        pl = self._get_playlist(self._validate_name(name))
-        normalized: list[PlaylistItem] = []
-        for i, raw in enumerate(items):
-            if not isinstance(raw, dict) or "url" not in raw:
-                raise PlaylistError(f"items[{i}] missing 'url'")
-            url = str(raw["url"]).strip()
-            if not url:
-                raise PlaylistError(f"items[{i}] has empty url")
+    def _normalize_item(
+        self, url, text, title, *, where: str = ""
+    ) -> "PlaylistItem | tuple[str, Optional[str]]":
+        """Validate one add request (DD-1). Returns a ready track
+        `PlaylistItem`, or a pending voice spec `(text, title)` that still
+        needs synthesis. `where` is an error-message prefix (`items[i]: `).
+        """
+        for label, val in (("url", url), ("text", text), ("title", title)):
+            if val is not None and not isinstance(val, str):
+                raise PlaylistError(f"{where}{label} must be a string")
+        url = url.strip() if url is not None else ""
+        text = text.strip() if text is not None else ""
+        if url and text:
+            raise PlaylistError(f"{where}give exactly one of 'url' or 'text', not both")
+        if not url and not text:
+            raise PlaylistError(f"{where}needs a non-empty 'url' or 'text'")
+        if url:
             try:
                 validate_http_url(url)
             except ValueError as e:
-                raise PlaylistError(f"items[{i}]: {e}")
-            normalized.append(PlaylistItem(url=url, title=raw.get("title")))
+                raise PlaylistError(f"{where}{e}")
+            return PlaylistItem(url=url, title=title)
+        if len(text) > MAX_VOICE_TEXT_CHARS:
+            raise PlaylistError(
+                f"{where}text is {len(text)} chars; max is {MAX_VOICE_TEXT_CHARS} "
+                "(use `say` for long-form narration)"
+            )
+        if self._synthesize_voice is None:
+            raise PlaylistError(
+                f"{where}voice items are unavailable: no speech synthesizer is configured"
+            )
+        return (text, title)
+
+    def _build_items(self, normalized: list) -> list["PlaylistItem"]:
+        """Synthesize pending voice specs (outside the lock), preserving
+        order. Raises PlaylistError (cause chained) on synthesis failure."""
+        out: list[PlaylistItem] = []
+        for n in normalized:
+            if isinstance(n, PlaylistItem):
+                out.append(n)
+                continue
+            text, title = n
+            try:
+                url = self._synthesize_voice(text)
+            except Exception as e:
+                raise PlaylistError(f"voice synthesis failed: {e}") from e
+            out.append(
+                PlaylistItem(url=url, title=title or f"DJ: {text[:40]}", text=text)
+            )
+        return out
+
+    def add(
+        self,
+        name: str,
+        url: Optional[str] = None,
+        *,
+        text: Optional[str] = None,
+        title: Optional[str] = None,
+    ) -> Playlist:
+        """Append a track (`url`) or a voice item (`text`) — exactly one."""
+        pl = self._get_playlist(self._validate_name(name))
+        built = self._build_items([self._normalize_item(url, text, title)])
         with self._lock:
-            pl.items.extend(normalized)
+            pl.items.extend(built)
+            return pl
+
+    def add_many(self, name: str, items: list[dict]) -> Playlist:
+        """Bulk-add. Each dict has exactly one of `url` / `text`; `title` is
+        optional. Every item is validated before any is synthesized; the
+        playlist is unchanged if anything fails."""
+        pl = self._get_playlist(self._validate_name(name))
+        normalized = []
+        for i, raw in enumerate(items):
+            if not isinstance(raw, dict):
+                raise PlaylistError(f"items[{i}] must be an object")
+            normalized.append(
+                self._normalize_item(
+                    raw.get("url"), raw.get("text"), raw.get("title"), where=f"items[{i}]: "
+                )
+            )
+        built = self._build_items(normalized)
+        with self._lock:
+            pl.items.extend(built)
             return pl
 
     def remove(self, name: str, index: int) -> Playlist:
@@ -269,50 +358,57 @@ class PlaylistManager:
         shuffle: bool,
         start_index: int,
     ) -> dict:
-        """Worker-thread engine path (unchanged behavior — MCP-hosted fallback)."""
+        """Worker-thread engine path (MCP-hosted / voice / fallback)."""
         with self._lock:
             # Stop any pre-existing session on this speaker.
             prev = self._sessions.get(speaker.uid)
             if prev:
                 self._signal_stop(prev)
 
+            # Build the whole session — play order included — under the same
+            # lock that registers it, so the worker can never see a
+            # half-initialized session (DD-5).
+            items = list(pl.items)
+            start_item = items[start_index]
+            if shuffle:
+                rest = items[:start_index] + items[start_index + 1:]
+                random.shuffle(rest)
+                order = [start_item] + rest
+                cur_index = 0  # index into `order`, not the playlist
+            else:
+                order = items
+                cur_index = start_index
             session = PlaybackSession(
                 playlist_name=playlist_name,
                 speaker_uid=speaker.uid,
                 speaker_name=speaker.player_name,
-                current_index=start_index,
+                current_index=cur_index,
                 shuffle=shuffle,
+                order=order,
+                scheduled_ids={id(it) for it in order},
+                current_item=start_item,
             )
             self._sessions[speaker.uid] = session
-
-        # Build the play order. For shuffle, generate a permutation now
-        # so skip/back behave intuitively.
-        order = list(range(len(pl.items)))
-        if shuffle:
-            head = order[start_index]
-            rest = order[:start_index] + order[start_index + 1:]
-            random.shuffle(rest)
-            order = [head] + rest
-            session.current_index = 0  # index into `order`, not the playlist
+            first_item = start_item
+            total_items = len(pl.items)
 
         if prev and prev.thread:
             prev.thread.join(timeout=2.0)
 
         t = threading.Thread(
             target=self._worker,
-            args=(session, pl, order, speaker),
+            args=(session, pl, speaker),
             name=f"playlist-{playlist_name}@{speaker.player_name}",
             daemon=True,
         )
         session.thread = t
         t.start()
 
-        first_item = pl.items[order[0] if shuffle else start_index]
         return {
             "started": True,
             "playlist": playlist_name,
             "speaker": speaker.player_name,
-            "total_items": len(pl.items),
+            "total_items": total_items,
             "start_index": start_index,
             "shuffle": shuffle,
             "first_item": first_item.to_dict(),
@@ -511,8 +607,16 @@ class PlaylistManager:
         info = {"engine": "worker", **sess.to_dict()}
         with self._lock:
             pl = self._playlists.get(sess.playlist_name)
-        if pl and 0 <= sess.current_index < len(pl.items):
-            info["current_item"] = pl.items[sess.current_index].to_dict()
+            cur = sess.current_item
+            pidx = -1
+            if pl is not None and cur is not None:
+                for i, it in enumerate(pl.items):
+                    if it is cur:
+                        pidx = i
+                        break
+        if cur is not None:
+            info["current_item"] = cur.to_dict()
+        info["current_playlist_index"] = pidx
         return info
 
     # ---- worker ------------------------------------------------------------
@@ -521,10 +625,15 @@ class PlaylistManager:
         self,
         session: PlaybackSession,
         playlist: Playlist,
-        order: list[int],
         speaker: SoCo,
     ) -> None:
-        """Background thread: play items in `order` until done or interrupted.
+        """Background thread: play `session.order` until done or interrupted.
+
+        Items are scheduled by object identity (DD-5): when the worker
+        reaches the end of `order` it extends it with any items appended to
+        the playlist since, otherwise it deregisters and exits — atomically,
+        under `self._lock`, so an append lands either before the check
+        (played once) or after the session is gone (needs `playlist_play`).
 
         Resolves the speaker's current group coordinator on every track so
         the playlist follows the speaker even if grouping changes
@@ -534,13 +643,39 @@ class PlaylistManager:
             "playlist worker started: %s on %s (%d items)",
             session.playlist_name,
             session.speaker_name,
-            len(order),
+            len(session.order),
         )
         try:
             while not session.stop_event.is_set():
                 if session.current_index < 0:
                     session.current_index = 0
-                if session.current_index >= len(order):
+                # One locked block per iteration. It must not call any helper
+                # that takes self._lock (non-reentrant): only touch
+                # playlist.items, the session, and self._sessions directly.
+                finished = False
+                with self._lock:
+                    while True:
+                        order = session.order
+                        if session.current_index >= len(order):
+                            new = [
+                                it for it in playlist.items
+                                if id(it) not in session.scheduled_ids
+                            ]
+                            if not new:
+                                cur = self._sessions.get(session.speaker_uid)
+                                if cur is session:
+                                    self._sessions.pop(session.speaker_uid, None)
+                                finished = True
+                                break
+                            order.extend(new)
+                            session.scheduled_ids.update(id(it) for it in new)
+                        item = order[session.current_index]
+                        if not any(x is item for x in playlist.items):
+                            session.current_index += 1  # removed/cleared: skip
+                            continue
+                        session.current_item = item
+                        break
+                if finished:
                     log.info(
                         "playlist %r finished on %s",
                         session.playlist_name,
@@ -548,9 +683,7 @@ class PlaylistManager:
                     )
                     break
 
-                playlist_idx = order[session.current_index]
-                item = playlist.items[playlist_idx]
-                title = item.title or f"{session.playlist_name} #{playlist_idx + 1}"
+                title = item.title or f"{session.playlist_name} #{session.current_index + 1}"
 
                 # Re-resolve coord each iteration in case grouping changed.
                 try:
@@ -607,11 +740,17 @@ class PlaylistManager:
                             coord.stop()
                         except Exception:
                             pass
-                        session.current_index = max(0, session.current_index - 2)
-                        # We'll do +1 below; net -1 lands us on previous track.
-                        # Edge: at index 0, back stays at 0.
-                        if session.current_index < 0:
-                            session.current_index = -1
+                        # After the outer +1 we land on the nearest earlier
+                        # item still in the playlist; none (or index 0) →
+                        # replay the current item. (DD-10)
+                        target = session.current_index  # replay by default
+                        with self._lock:
+                            for j in range(session.current_index - 1, -1, -1):
+                                cand = session.order[j]
+                                if any(x is cand for x in playlist.items):
+                                    target = j
+                                    break
+                        session.current_index = target - 1
                         break
 
                     try:
