@@ -1,6 +1,6 @@
 """Sonos MCP server — local control over WiFi via UPnP/SoCo."""
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 from .controller import SonosController
 
