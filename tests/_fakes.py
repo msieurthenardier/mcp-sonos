@@ -107,6 +107,8 @@ class SoCoFake:
     # retry wired around each in playlists.py.
     clear_queue_raise: "Exception | None" = field(default=None)
     play_uri_raise: "Exception | None" = field(default=None)
+    # Every successful play_uri(uri, title) call, in order (playlist tests).
+    play_uri_log: list = field(default_factory=list)
     # Opt-in link to a shared FakeHousehold (see below). When set, join()/
     # unjoin()/stop() delegate to it for hardware-accurate multi-group
     # semantics. When None (the default), the simplistic self-contained
@@ -155,6 +157,7 @@ class SoCoFake:
         # artist, album, etc. so snapshot tests can read these fields after a
         # play_uri call (e.g. _with_queue_resume reads playlist_position from
         # get_current_track_info() which returns a copy of _track).
+        self.play_uri_log.append((uri, title or ""))
         self._track = {**self._track, "uri": uri, "title": title or ""}
         self._transport = {"current_transport_state": "PLAYING"}
 

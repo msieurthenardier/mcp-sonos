@@ -32,6 +32,7 @@ uvx --from git+https://github.com/msieurthenardier/mcp-sonos mcp-sonos
 # if this host's default scan/SSDP can't reach the household.
 .venv/bin/python smoke_test.py            # basic tools: say, list, etc.
 .venv/bin/python playlist_smoke.py        # playlists: natural end, skip, stop
+.venv/bin/python playlist_smoke.py dj     # DJ voice segments only (SMOKE_SPEAKER, optional SMOKE_VOLUME)
 .venv/bin/python queue_smoke.py           # native-queue engine: play, next, stop
 .venv/bin/python reap_smoke.py --load     # reap-survival phase 1: loads queue + exits (= the reap)
 .venv/bin/python reap_smoke.py --control  # reap-survival phase 2: fresh process drives the live queue
@@ -217,9 +218,44 @@ Routing rule: `any_mcp_hosted(urls, host_ip, audio_port)` returns
 `True` → worker engine; all-external (or coordinates unknown) →
 native-queue engine (or worker fallback if coordinates unknown).
 
+### Item kinds and voice items
+
+A `PlaylistItem` is a *track* (`url`) or a *voice* item (`text`);
+`to_dict()` reports `kind` ("track"/"voice") and, for voice, `text`. A
+voice item is synthesized at add time (outside `self._lock`, via the
+injected `synthesize_voice`, the same Piper -> TTS cache -> audio-host-URL
+pipeline `say` uses) and stores the hosted URL, so routing needs no
+special case: a playlist with any voice item hits `any_mcp_hosted` and
+runs on the **worker engine** (stops if the process exits; a native-queue
+playlist never picks up a later voice append). `MAX_VOICE_TEXT_CHARS`
+(1000) is a hard error, never truncation. Default voice title is
+`"DJ: " + text[:40]`. `add_many` validates every item before synthesizing
+any, so a bad item leaves the playlist unchanged. `PlaylistItem` is a
+value-equality dataclass: **use identity (`is`/`id()`), never `==`/`in`,
+when comparing items in the worker.**
+
+### Live append (worker engine)
+
+The worker schedules item *objects*, not indices: `PlaybackSession.order`
+(object refs, shuffled if requested) plus `scheduled_ids` (`id()` of every
+item ever placed in `order`), built together with the session inside the
+`_lock` block that registers it. Each worker iteration takes `self._lock`
+once to: extend `order` with unscheduled items when it reaches the end (or
+deregister the session, guarded by `cur is session`, if there are none),
+skip items no longer in `playlist.items`, and set `session.current_item`.
+**That block must not call anything that takes `self._lock`**
+(`_get_playlist`, `_session_for`, `has_active_session`...) — the lock is
+non-reentrant. `remove`/`clear` need no session bookkeeping. An append
+lands either before the final check (played once) or after the session is
+gone (needs `playlist_play` again). `status()` reports `current_item` from
+`session.current_item` and `current_playlist_index` (identity search,
+`-1` if removed or the playlist was deleted); `current_index` stays the
+play-order position. `previous` follows play order, replaying the current
+item at index 0.
+
 ### PlaylistManager dependency injection
 
-`PlaylistManager.__init__` takes four parameters:
+`PlaylistManager.__init__` takes five parameters:
 
 - `resolve_coordinator(name) -> (SoCo, SoCo)` — injected so tests
   don't pull in the full `SonosController`.
@@ -231,6 +267,10 @@ native-queue engine (or worker fallback if coordinates unknown).
   speakers cache TTL so the next `_resolve_coordinator` forces a fresh
   discovery. Called before a stale-coordinator retry. Defaults to
   no-op so tests don't break.
+- `synthesize_voice: Optional[Callable[[str], str]]` — text -> hosted
+  URL for voice items. `SonosController` wires it to
+  `_synthesize_voice_url`. `None` → adding a voice item raises
+  `PlaylistError`.
 
 ### Engine discriminator
 

@@ -17,6 +17,7 @@ from pydantic import AfterValidator, Field
 from . import __version__
 from ._urls import validate_http_url
 from .controller import SonosController
+from .playlists import MAX_VOICE_TEXT_CHARS
 
 
 mcp = FastMCP(
@@ -310,7 +311,11 @@ def register_tools(mcp: FastMCP, controller: SonosController) -> None:
     # process. Build them up with `playlist_create` / `playlist_add` (or the
     # bulk `playlist_add_many`), then `playlist_play` to start continuous
     # playback in the background. The agent is free to add more items while a
-    # playlist is playing; subsequent tracks will pick them up.
+    # playlist is playing: on the worker engine (any playlist containing a
+    # voice item or MCP-hosted URL) appended items are played if the playlist
+    # is still playing; once it has finished, call `playlist_play` again. A
+    # track-only playlist already playing on the native Sonos queue does NOT
+    # pick up appends.
 
     @mcp.tool
     def playlist_create(name: PlaylistName) -> dict:
@@ -332,14 +337,23 @@ def register_tools(mcp: FastMCP, controller: SonosController) -> None:
     def playlist_add(
         name: PlaylistName,
         url: Annotated[
-            str,
-            AfterValidator(validate_http_url),
-            Field(description="HTTP(S) URL of an audio track. Prefer plain HTTP MP3 — see README for stream-format gotchas."),
-        ],
-        title: Annotated[str | None, Field(description="Optional display title for the Sonos UI and `now_playing`.")] = None,
+            Annotated[str, AfterValidator(validate_http_url)] | None,
+            Field(description="HTTP(S) URL of an audio track. Prefer plain HTTP MP3 — see README for stream-format gotchas. Give exactly one of `url` or `text`."),
+        ] = None,
+        text: Annotated[
+            str | None,
+            Field(description=(
+                "Spoken DJ segment: plain text, synthesized to speech now and "
+                f"played in this position (max {MAX_VOICE_TEXT_CHARS} chars; keep "
+                "it short). Give exactly one of `url` or `text`. A playlist "
+                "with any voice item plays on the worker engine (stops if the "
+                "MCP process exits)."
+            )),
+        ] = None,
+        title: Annotated[str | None, Field(description="Optional display title for the Sonos UI and `now_playing`. Voice items default to 'DJ: <first 40 chars>'.")] = None,
     ) -> dict:
-        """Append one item to a playlist."""
-        return controller.playlists.add(name, url, title=title).to_dict()
+        """Append one item to a playlist: a track (`url`) or a spoken voice segment (`text`)."""
+        return controller.playlists.add(name, url, text=text, title=title).to_dict()
 
     @mcp.tool
     def playlist_add_many(
@@ -348,22 +362,27 @@ def register_tools(mcp: FastMCP, controller: SonosController) -> None:
             list[dict],
             Field(
                 description=(
-                    "List of items. Each dict needs 'url'; 'title' is optional. "
-                    "Use this instead of repeated playlist_add calls to keep tool "
-                    "round-trips down."
+                    "List of items. Each dict has exactly one of 'url' (a track) "
+                    "or 'text' (a spoken voice segment, max "
+                    f"{MAX_VOICE_TEXT_CHARS} chars, synthesized now); 'title' is "
+                    "optional. Order is preserved, so one call can build "
+                    "song, song, voice, song. Voice items make the playlist use "
+                    "the worker engine. Use this instead of repeated "
+                    "playlist_add calls to keep tool round-trips down."
                 )
             ),
         ],
     ) -> dict:
-        """Append many items to a playlist in one call. Use this for bulk-loading."""
+        """Append many items (tracks and/or voice segments) to a playlist in one call."""
         # Scheme validation up front so the MCP response carries a clean
-        # per-index error before we even reach the controller. Dict-shape
-        # enforcement is intentionally lax here — PlaylistManager.add_many
-        # already rejects missing/empty `url` with the same idiom.
+        # per-index error before we even reach the controller. Everything
+        # else (exactly-one-of, types, caps) is enforced by
+        # PlaylistManager.add_many. Check the raw value before str(): an
+        # absent/None url must not become the string "None".
         for i, raw in enumerate(items):
-            if isinstance(raw, dict) and "url" in raw:
+            if isinstance(raw, dict) and isinstance(raw.get("url"), str) and raw["url"].strip():
                 try:
-                    validate_http_url(str(raw["url"]).strip())
+                    validate_http_url(raw["url"].strip())
                 except ValueError as e:
                     raise ValueError(f"items[{i}]: {e}")
         return controller.playlists.add_many(name, items).to_dict()
