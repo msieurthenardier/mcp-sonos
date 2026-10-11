@@ -1,6 +1,6 @@
 # Sortie: DJ Voice Segments in Playlists
 
-**Status**: landed
+**Status**: completed
 
 ## Charter
 
@@ -23,7 +23,8 @@ step is small.
 - [x] `playlist_play` on a mixed playlist plays every item in order on real
       hardware, with voice segments audible between songs. *(Hardware
       verified 2026-10-10: `dj` smoke PASS on Kitchen, `now_playing` PLAYING
-      at each voice item's hosted URI. Operator's listening check pending.)*
+      at each voice item's hosted URI. Operator confirmed audibly
+      2026-10-11.)*
 - [x] `playlist_next` / `playlist_previous` / `playlist_stop` /
       `playlist_status` behave the same across voice items as song items.
 - [x] Unit tests cover the new item type, and the README agent system
@@ -387,7 +388,7 @@ shuffled order.
 
 ### Completion Checklist
 - [x] All legs completed
-- [ ] Code merged
+- [x] Code merged
 - [x] Tests passing
 - [x] Documentation updated
 
