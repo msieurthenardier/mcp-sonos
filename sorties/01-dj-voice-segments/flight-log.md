@@ -141,3 +141,7 @@ Sortie 01 chartered and flown 2026-10-10 (autonomous overnight run). Both legs c
   (a mechanical commit with no source edits; saves one spawn under a tight
   usage window). Files were staged explicitly so the operator's stray root
   files (`play`, `play-`, `song-`, `voice`) stay out.
+- 2026-10-11: Operator confirmed audibly ("its working"); charter criterion 2
+  is fully met. Flight debrief written (Developer + Architect crew
+  interviews; human interview skipped). Squawks 0008 and 0009 logged from
+  its action items (open). Sortie → completed.
