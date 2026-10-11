@@ -503,8 +503,8 @@ Single source of truth: `mcp_sonos/__init__.py` → `__version__`.
   "mcp_sonos/__init__.py"`). Do NOT add a static `version =` back to `pyproject.toml`.
 - `mcp_sonos/server.py` passes `version=__version__` into `FastMCP(...)` so the MCP
   `initialize` handshake advertises the project version (not FastMCP's framework version
-  — a regression that previously made the server report `"3.3.1"`).
-- `tests/test_version.py` guards the wiring (`mcp.version == __version__`, not `"3.x"`)
+  — a regression that previously made the server report `"3.3.1"`; FastMCP is now 4.x).
+- `tests/test_version.py` guards the wiring (`mcp.version == __version__`, not the FastMCP framework version)
   — forgetting to wire a bump fails the suite.
 
 **When to bump**: pre-1.0 semver-style — minor for meaningful new behavior/capabilities,
